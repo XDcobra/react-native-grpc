@@ -5,33 +5,13 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 
 ## Changes vs upstream
 
-- Removed deprecated `jcenter()` (breaks modern AGP / RN 0.86+)
+- Removed deprecated `jcenter()` (required for modern AGP / RN 0.86+)
 - Android `namespace 'com.reactnativegrpc'`
 - `minSdkVersion` 24
+- Builds and runs with React Native New Architecture (Native Module interop)
 - Package renamed to `@xdcobra/react-native-grpc`
-- Explicit `base64-js` dependency (used by the JS client)
-- Prebuilt `lib/` committed for `file:` / git consumers without running `bob`
-
-## Local use
-
-```json
-"@xdcobra/react-native-grpc": "file:../react-native-grpc"
-```
-
-## GitHub / npm
-
-```bash
-cd D:\react-native-grpc
-git remote add origin git@github.com:XDcobra/react-native-grpc.git
-git push -u origin main
-# later: npm publish --access public
-```
-
-Upstream remote (read-only):
-
-```bash
-git remote -v   # upstream → krishnafkh/react-native-grpc
-```
+- Explicit `base64-js` dependency
+- Prebuilt `lib/` included so install does not require `react-native-builder-bob`
 
 ## Installation
 
@@ -57,7 +37,21 @@ const { response } = await GrpcClient.unaryCall(
 );
 ```
 
-Unary (+ server streaming upstream). Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
+Unary and server streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
+
+## TODOs
+
+Gaps vs a full gRPC client (not yet supported or not exposed):
+
+- **Client streaming** — native hooks exist; no public JS API on `GrpcClient`
+- **Bidirectional streaming** — not implemented
+- **Per-call deadlines / timeouts** — channel keep-alive only; no call-level deadline
+- **TLS options** — plaintext vs default TLS only; no custom CA, client certs, or mTLS
+- **Multiple channels / hosts** — single global host; no concurrent channels
+- **Interceptors** — no request/response middleware
+- **Retry / hedging** — no client-side retry policy
+- **Cross-platform connection events** — Android-only (`onConnectionStateChange`, `enterIdle`, …)
+- **Codegen / stubs** — raw method paths + bytes; no generated service clients
 
 ## License
 
