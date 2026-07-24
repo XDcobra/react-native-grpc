@@ -9,6 +9,7 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 - Android `namespace 'com.reactnativegrpc'` (no `package` in AndroidManifest)
 - `minSdkVersion` 24
 - Builds and runs with React Native New Architecture (Native Module interop)
+- Per-call deadline via `setCallDeadlineSeconds` (native default 120s)
 - Explicit `base64-js` dependency
 - Prebuilt `lib/` included so install does not require `react-native-builder-bob`
 
@@ -44,7 +45,7 @@ Gaps vs a full gRPC client (not yet supported or not exposed):
 
 - **Client streaming** — native hooks exist; no public JS API on `GrpcClient`
 - **Bidirectional streaming** — not implemented
-- **Per-call deadlines / timeouts** — channel keep-alive only; no call-level deadline
+- **Per-call deadlines / timeouts** — `setCallDeadlineSeconds` (default 120s); not yet exposed per individual RPC
 - **TLS options** — plaintext vs default TLS only; no custom CA, client certs, or mTLS
 - **Multiple channels / hosts** — single global host; no concurrent channels
 - **Interceptors** — no request/response middleware

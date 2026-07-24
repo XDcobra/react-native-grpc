@@ -42,6 +42,8 @@ public class GrpcModule extends ReactContextBaseJavaModule {
   private Integer keepAliveTime;
   private Integer keepAliveTimeout;
   private boolean isUiLogEnabled = false;
+  /** Per-call deadline in seconds (0 = no deadline). Default 120s. */
+  private long callDeadlineSeconds = 120;
 
   private ManagedChannel managedChannel = null;
 
@@ -91,6 +93,11 @@ public class GrpcModule extends ReactContextBaseJavaModule {
     this.keepAliveEnabled = enabled;
     this.keepAliveTime = time;
     this.keepAliveTimeout = timeout;
+  }
+
+  @ReactMethod
+  public void setCallDeadlineSeconds(double seconds) {
+    this.callDeadlineSeconds = Math.max(0, (long) seconds);
   }
 
   @ReactMethod
@@ -214,6 +221,9 @@ public class GrpcModule extends ReactContextBaseJavaModule {
 
     if (!this.compressorName.isEmpty()) {
       callOptions = callOptions.withCompression(this.compressorName);
+    }
+    if (this.callDeadlineSeconds > 0) {
+      callOptions = callOptions.withDeadlineAfter(this.callDeadlineSeconds, TimeUnit.SECONDS);
     }
 
     ClientCall call = this.managedChannel.newCall(descriptor, callOptions);

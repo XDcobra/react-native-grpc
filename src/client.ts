@@ -20,6 +20,7 @@ type GrpcType = {
   setInsecure(insecure: boolean): void;
   setCompression(enable: boolean, compressorName: string): void;
   setResponseSizeLimit(limitInBytes: number): void;
+  setCallDeadlineSeconds(seconds: number): void;
   initGrpcChannel(): void;
   unaryCall(
     id: number,
@@ -194,6 +195,10 @@ export class GrpcClient {
   }
   setResponseSizeLimit(limitInBytes: number): void {
     Grpc.setResponseSizeLimit(limitInBytes);
+  }
+  /** Per-call deadline in seconds (Android/iOS). Default 120. 0 = no deadline (Android). */
+  setCallDeadlineSeconds(seconds: number): void {
+    Grpc.setCallDeadlineSeconds(seconds);
   }
 
   initGrpcChannel() {

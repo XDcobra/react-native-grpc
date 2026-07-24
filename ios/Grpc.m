@@ -117,6 +117,8 @@
     if (self.grpcResponseSizeLimit != nil) {
         options.responseSizeLimit = self.grpcResponseSizeLimit.unsignedLongValue;
     }
+    NSTimeInterval deadline = self.grpcCallDeadlineSeconds > 0 ? self.grpcCallDeadlineSeconds : 120;
+    options.timeout = deadline;
 
     return options;
 }
@@ -145,6 +147,11 @@ RCT_EXPORT_METHOD(setInsecure:
 RCT_EXPORT_METHOD(setResponseSizeLimit:
     (nonnull NSNumber*) limit) {
     self.grpcResponseSizeLimit = limit;
+}
+
+RCT_EXPORT_METHOD(setCallDeadlineSeconds:
+    (nonnull NSNumber*) seconds) {
+    self.grpcCallDeadlineSeconds = MAX(0, [seconds doubleValue]);
 }
 
 RCT_EXPORT_METHOD(unaryCall:
