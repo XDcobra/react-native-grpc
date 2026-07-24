@@ -3,9 +3,6 @@ buildscript {
 
   repositories {
     google()
-    jcenter()
-    // Some grpc-java releases may be missing in JCenter.
-    // See https://github.com/grpc/grpc-java/issues/5782
     mavenCentral()
     mavenLocal()
   }
@@ -26,10 +23,11 @@ def getExtOrIntegerDefault(name) {
 }
 
 android {
+  namespace 'com.reactnativegrpc'
   compileSdkVersion getExtOrIntegerDefault('compileSdkVersion')
   buildToolsVersion getExtOrDefault('buildToolsVersion')
   defaultConfig {
-    minSdkVersion 16
+    minSdkVersion 24
     targetSdkVersion getExtOrIntegerDefault('targetSdkVersion')
     versionCode 1
     versionName "1.0"
@@ -52,7 +50,6 @@ android {
 
 repositories {
   mavenCentral()
-  jcenter()
   google()
 
   def found = false

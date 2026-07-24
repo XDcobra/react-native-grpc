@@ -1,0 +1,37 @@
+export declare type GrpcMetadata = Record<string, string>;
+export declare type RemoveListener = () => void;
+export interface GrpcServerInputStream {
+    send(data: Uint8Array): Promise<void>;
+    complete(): Promise<void>;
+}
+export declare type DataCallback = (data: Uint8Array) => void;
+export declare type ErrorCallback = (reason: any) => void;
+export declare type CompleteCallback = () => void;
+export declare type ServerOutputEvent = 'data' | 'error' | 'complete';
+export declare type ServerOutputEventCallback<T> = T extends 'data' ? DataCallback : T extends 'complete' ? CompleteCallback : T extends 'error' ? ErrorCallback : never;
+export interface GrpcServerOutputStream {
+    on<T extends ServerOutputEvent>(event: T, callback: ServerOutputEventCallback<T>): RemoveListener;
+}
+export declare type GrpcUnaryResponse = {
+    data: Uint8Array;
+    headers: GrpcMetadata;
+};
+export declare type CompletedGrpcUnaryCall = {
+    readonly method: string;
+    readonly requestHeaders: GrpcMetadata;
+    readonly request: Uint8Array;
+    readonly headers?: GrpcMetadata;
+    readonly response?: Uint8Array;
+    readonly status?: number;
+    readonly trailers?: GrpcMetadata;
+};
+export declare type CompletedGrpcStreamingCall = {
+    readonly method: string;
+    readonly requestHeaders: GrpcMetadata;
+    readonly request: Uint8Array;
+    readonly headers?: GrpcMetadata;
+    readonly responses?: GrpcServerOutputStream;
+    readonly status?: number;
+    readonly trailers?: GrpcMetadata;
+};
+//# sourceMappingURL=types.d.ts.map
