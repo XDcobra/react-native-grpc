@@ -6,10 +6,9 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 ## Changes vs upstream
 
 - Removed deprecated `jcenter()` (required for modern AGP / RN 0.86+)
-- Android `namespace 'com.reactnativegrpc'`
+- Android `namespace 'com.reactnativegrpc'` (no `package` in AndroidManifest)
 - `minSdkVersion` 24
 - Builds and runs with React Native New Architecture (Native Module interop)
-- Package renamed to `@xdcobra/react-native-grpc`
 - Explicit `base64-js` dependency
 - Prebuilt `lib/` included so install does not require `react-native-builder-bob`
 
