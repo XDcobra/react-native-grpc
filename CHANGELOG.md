@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Multiple concurrent channels via `createChannel` / `GrpcChannel` (immutable per-channel host, TLS, deadline, keepalive, compression)
 - Interceptors via `createChannel({ interceptors })` / `GrpcClient.setInterceptors` and per-RPC `options.interceptors` (onion chain: onStart, onSendMessage, onHeaders, onMessage, onTrailers, onError)
+- Unary retry / hedging via `createChannel({ retry | hedging })`, `GrpcClient.setRetryPolicy` / `setHedgingPolicy`, and per-RPC overrides (A6-style; mutually exclusive; `GrpcStatusCode` exported)
 
 ## [1.0.0] - 2026-07-27
 

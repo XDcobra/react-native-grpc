@@ -14,6 +14,7 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 - TLS options via `GrpcClient.setTlsOptions` (custom CA, mTLS, hostname override, SPKI pins)
 - Multiple concurrent channels via `createChannel` / `GrpcChannel` (immutable per-channel config)
 - Interceptors via `createChannel({ interceptors })` / `GrpcClient.setInterceptors` (auth, logging, remapping)
+- Unary retry / hedging via `createChannel({ retry | hedging })` / `GrpcClient.setRetryPolicy` / `setHedgingPolicy` (A6-style)
 
 ## Installation
 
@@ -156,6 +157,42 @@ await channel.unaryCall('/package.Service/Method', requestBytes, {}, {
 
 Hooks: `onStart`, `onSendMessage`, `onHeaders`, `onMessage`, `onTrailers`, `onError`.
 
+### Retry / hedging (unary only)
+
+A6-inspired client policies for **unary** RPCs. Retry and hedging are mutually exclusive. Streams ignore these policies. Without a policy there is no automatic retry.
+
+```ts
+import {
+  createChannel,
+  GrpcClient,
+  GrpcStatusCode,
+} from '@xdcobra/react-native-grpc';
+
+const retry = {
+  maxAttempts: 4, // clamped to max 5
+  initialBackoff: '0.1s',
+  maxBackoff: '1s',
+  backoffMultiplier: 2,
+  retryableStatusCodes: ['UNAVAILABLE', GrpcStatusCode.RESOURCE_EXHAUSTED],
+};
+
+// Preferred multi-host path
+const channel = createChannel({
+  host: 'api.example.com:443',
+  retry,
+});
+
+// Singleton
+GrpcClient.setRetryPolicy(retry);
+// GrpcClient.setHedgingPolicy({ maxAttempts: 3, hedgingDelay: '0.5s', nonFatalStatusCodes: ['UNAVAILABLE'] });
+
+await channel.unaryCall('/package.Service/Method', requestBytes, {}, {
+  retry: false, // disable for this call
+});
+```
+
+Hedging sends parallel attempts (first success wins; siblings are cancelled). Call deadline applies across the whole retry/hedge chain.
+
 Unary, server streaming, client streaming, and bidirectional streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
 
 ### TLS matrix
@@ -186,7 +223,7 @@ openssl x509 -in leaf.pem -pubkey -noout \
 
 Gaps vs a full gRPC client (not yet supported or not exposed):
 
-- **Retry / hedging**: no client-side retry policy
+- **Retry / hedging — remaining**: DNS/service-config JSON; retry throttling (A6); stream retry / transparent retry after first response message; native `enableRetry` / C-core service config (JS unary policies are implemented)
 - **Cross-platform connection events**: Android-only (`onConnectionStateChange`, `enterIdle`, …)
 - **Codegen / stubs**: raw method paths + bytes; no generated service clients
 
