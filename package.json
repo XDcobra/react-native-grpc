@@ -33,6 +33,7 @@
     "build": "bob build",
     "prepare": "bob build",
     "release": "release-it",
+    "release:first": "release-it --no-increment",
     "example": "yarn --cwd example",
     "pods": "cd example && pod-install --quiet",
     "bootstrap": "yarn example && yarn && yarn pods"
@@ -101,7 +102,8 @@
   "release-it": {
     "git": {
       "commitMessage": "chore: release ${version}",
-      "tagName": "v${version}"
+      "tagName": "v${version}",
+      "allowEmptyCommit": true
     },
     "npm": {
       "publish": true
