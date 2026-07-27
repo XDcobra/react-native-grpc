@@ -36,11 +36,18 @@ import {
   DEFAULT_CHANNEL_ID,
   GrpcClient,
   GrpcError,
+  GrpcInterceptor,
 } from '../index';
+
+/** Unary/server-stream native start is deferred until interceptor onStart settles. */
+async function flushNativeStart() {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockChannels.clear();
+  GrpcClient.setInterceptors([]);
 });
 
 describe('GrpcClient channel config', () => {
@@ -140,6 +147,7 @@ describe('createChannel', () => {
 
     const callA = a.unaryCall('/svc/A', new Uint8Array([1]));
     const callB = b.unaryCall('/svc/B', new Uint8Array([2]));
+    await flushNativeStart();
     expect(mockGrpc.unaryCall).toHaveBeenCalledTimes(2);
     const [, , , , channelIdA] = mockGrpc.unaryCall.mock.calls[0] as any;
     const [, , , , channelIdB] = mockGrpc.unaryCall.mock.calls[1] as any;
@@ -195,6 +203,7 @@ describe('GrpcClient.unaryCall', () => {
       authorization: 'Bearer x',
     });
 
+    await flushNativeStart();
     expect(mockGrpc.unaryCall).toHaveBeenCalledTimes(1);
     const [id, path, obj, headers, channelId] = mockGrpc.unaryCall.mock
       .calls[0] as any;
@@ -233,6 +242,7 @@ describe('GrpcClient.unaryCall', () => {
       undefined,
       { deadlineSeconds: 45 }
     );
+    await flushNativeStart();
     const [id, , obj, , channelId] = mockGrpc.unaryCall.mock.calls[0] as any;
     expect(obj.deadlineSeconds).toBe(45);
     expect(channelId).toBe(DEFAULT_CHANNEL_ID);
@@ -249,6 +259,7 @@ describe('GrpcClient.unaryCall', () => {
 
   it('rejects with GrpcError on native error event', async () => {
     const call = GrpcClient.unaryCall('/svc/Fail', new Uint8Array([0]));
+    await flushNativeStart();
     const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
 
     emitGrpcCall({
@@ -268,6 +279,7 @@ describe('GrpcClient.unaryCall', () => {
 
   it('calls cancelGrpcCall when the unary call is cancelled', async () => {
     const call = GrpcClient.unaryCall('/svc/Cancel', new Uint8Array([0]));
+    await flushNativeStart();
     const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
 
     call.cancel();
@@ -285,6 +297,7 @@ describe('GrpcClient.serverStreamCall', () => {
       {},
       { deadlineSeconds: 30 }
     );
+    await flushNativeStart();
     const [id, , obj, , channelId] = mockGrpc.serverStreamingCall.mock
       .calls[0] as any;
     expect(obj.deadlineSeconds).toBe(30);
@@ -471,5 +484,220 @@ describe('GrpcClient.bidiStreamCall', () => {
     call.cancel();
     await Promise.resolve();
     expect(mockGrpc.cancelGrpcCall).toHaveBeenCalledWith(id);
+  });
+});
+
+describe('interceptors', () => {
+  it('injects auth headers via onStart on the singleton', async () => {
+    GrpcClient.setInterceptors([
+      {
+        onStart(start) {
+          return {
+            ...start,
+            headers: {
+              ...start.headers,
+              authorization: 'Bearer secret',
+            },
+          };
+        },
+      },
+    ]);
+
+    const call = GrpcClient.unaryCall('/svc/Auth', new Uint8Array([1]));
+    await flushNativeStart();
+    const [, , , headers] = mockGrpc.unaryCall.mock.calls[0] as any;
+    expect(headers).toEqual({ authorization: 'Bearer secret' });
+
+    const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
+    emitGrpcCall({ id, type: 'headers', payload: {} });
+    emitGrpcCall({
+      id,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([1])),
+    });
+    emitGrpcCall({ id, type: 'trailers', payload: {} });
+    await call;
+  });
+
+  it('runs outbound 0→n and inbound n→0 (onion)', async () => {
+    const order: string[] = [];
+    const a: GrpcInterceptor = {
+      onStart(start) {
+        order.push('a-start');
+        return start;
+      },
+      onHeaders(headers) {
+        order.push('a-headers');
+        return headers;
+      },
+    };
+    const b: GrpcInterceptor = {
+      onStart(start) {
+        order.push('b-start');
+        return start;
+      },
+      onHeaders(headers) {
+        order.push('b-headers');
+        return headers;
+      },
+    };
+    GrpcClient.setInterceptors([a, b]);
+
+    const call = GrpcClient.unaryCall('/svc/Onion', new Uint8Array([0]));
+    await flushNativeStart();
+    const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
+    emitGrpcCall({ id, type: 'headers', payload: { x: '1' } });
+    emitGrpcCall({
+      id,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([1])),
+    });
+    emitGrpcCall({ id, type: 'trailers', payload: {} });
+    await call;
+
+    expect(order).toEqual(['a-start', 'b-start', 'b-headers', 'a-headers']);
+  });
+
+  it('rewrites inbound messages via onMessage', async () => {
+    GrpcClient.setInterceptors([
+      {
+        onMessage() {
+          return new Uint8Array([42]);
+        },
+      },
+    ]);
+
+    const call = GrpcClient.unaryCall('/svc/Rewrite', new Uint8Array([0]));
+    await flushNativeStart();
+    const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
+    emitGrpcCall({ id, type: 'headers', payload: {} });
+    emitGrpcCall({
+      id,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([1, 2])),
+    });
+    emitGrpcCall({ id, type: 'trailers', payload: {} });
+    const completed = await call;
+    expect(completed.response).toEqual(new Uint8Array([42]));
+  });
+
+  it('remaps errors via onError', async () => {
+    GrpcClient.setInterceptors([
+      {
+        onError() {
+          return new GrpcError('MAPPED', 16);
+        },
+      },
+    ]);
+
+    const call = GrpcClient.unaryCall('/svc/Err', new Uint8Array([0]));
+    await flushNativeStart();
+    const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
+    emitGrpcCall({
+      id,
+      type: 'error',
+      error: 'INTERNAL',
+      code: 13,
+    });
+
+    await expect(call).rejects.toMatchObject({ error: 'MAPPED', code: 16 });
+  });
+
+  it('aborts before native when onStart throws', async () => {
+    GrpcClient.setInterceptors([
+      {
+        onStart() {
+          throw new Error('no token');
+        },
+      },
+    ]);
+
+    const call = GrpcClient.unaryCall('/svc/Abort', new Uint8Array([0]));
+    await expect(call).rejects.toBeInstanceOf(GrpcError);
+    await expect(call).rejects.toMatchObject({ error: 'no token' });
+    expect(mockGrpc.unaryCall).not.toHaveBeenCalled();
+  });
+
+  it('appends per-call interceptors after channel interceptors', async () => {
+    const order: string[] = [];
+    GrpcClient.setInterceptors([
+      {
+        onStart(start) {
+          order.push('channel');
+          return start;
+        },
+      },
+    ]);
+
+    const call = GrpcClient.unaryCall(
+      '/svc/PerCall',
+      new Uint8Array([0]),
+      {},
+      {
+        interceptors: [
+          {
+            onStart(start) {
+              order.push('call');
+              return start;
+            },
+          },
+        ],
+      }
+    );
+    await flushNativeStart();
+    const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
+    emitGrpcCall({ id, type: 'headers', payload: {} });
+    emitGrpcCall({
+      id,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([1])),
+    });
+    emitGrpcCall({ id, type: 'trailers', payload: {} });
+    await call;
+    expect(order).toEqual(['channel', 'call']);
+  });
+
+  it('binds interceptors on createChannel independently of GrpcClient', async () => {
+    GrpcClient.setInterceptors([
+      {
+        onStart(start) {
+          return {
+            ...start,
+            headers: { ...start.headers, from: 'client' },
+          };
+        },
+      },
+    ]);
+
+    const channel = createChannel({
+      host: 'intercept.example.com:443',
+      insecure: true,
+      interceptors: [
+        {
+          onStart(start) {
+            return {
+              ...start,
+              headers: { ...start.headers, from: 'channel' },
+            };
+          },
+        },
+      ],
+    });
+
+    const call = channel.unaryCall('/svc/Ch', new Uint8Array([0]));
+    await flushNativeStart();
+    const [, , , headers] = mockGrpc.unaryCall.mock.calls[0] as any;
+    expect(headers).toEqual({ from: 'channel' });
+
+    const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
+    emitGrpcCall({ id, type: 'headers', payload: {} });
+    emitGrpcCall({
+      id,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([1])),
+    });
+    emitGrpcCall({ id, type: 'trailers', payload: {} });
+    await call;
+    channel.close();
   });
 });
