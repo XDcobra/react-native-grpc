@@ -1,10 +1,36 @@
-## [Unreleased] - 2023-09-04
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [1.0.0] - 2026-07-27
+
+First public release of `@xdcobra/react-native-grpc` (fork of
+`@krishnafkh/react-native-grpc` / Mitch528).
 
 ### Added
-1. Channel Creation happening from JS layer
-2. Reset Connection
-3. Reset Connection State based on current state
-4. UI log to debug release build
+
+- Per-call deadline via `setCallDeadlineSeconds` (default 120s) and per-RPC `options.deadlineSeconds`
+- Client streaming via `GrpcClient.clientStreamCall`
+- Bidirectional streaming via `GrpcClient.bidiStreamCall`
+- TLS options via `GrpcClient.setTlsOptions` (custom CA, mTLS, hostname override, SPKI pins)
+- Jest coverage for unary, streaming, TLS config, and native mocks
+- GitHub Actions CI (lint / test / typescript)
+
+### Changed
+
+- React Native New Architecture compatible (Native Module interop)
+- Android `namespace 'com.reactnativegrpc'`; `minSdkVersion` 24
+- `lib/` is build output only (`prepare` / `bob build`); not committed
+- npm package files whitelist (no IDE junk / example / tests)
+
+### Upstream history
+
+Older entries below are from the upstream project lineage (pre-fork numbering).
 
 ## [1.0.5] - 2023-04-12
 
@@ -17,7 +43,6 @@ LINT FIX
 ### Added
 
 Add option to configure keepalive
-
 
 ## [1.0.3] - 2023-04-12
 
@@ -80,7 +105,7 @@ Fix status code not being included in gRPC error on iOS
 
 Now using gRPC-Swift on iOS
 
-### [0.1.10] - 2022-09-01
+## [0.1.10] - 2022-09-01
 
 ### Improvements
 
