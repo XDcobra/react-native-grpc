@@ -10,8 +10,9 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 - `minSdkVersion` 24
 - Builds and runs with React Native New Architecture (Native Module interop)
 - Per-call deadline via `setCallDeadlineSeconds` (default 120s) and per-RPC `options.deadlineSeconds`
+- Client streaming via `GrpcClient.clientStreamCall`
 - Explicit `base64-js` dependency
-- Prebuilt `lib/` included so install does not require `react-native-builder-bob`
+- `lib/` is build output (`yarn build` / `prepare`); not committed
 
 ## Installation
 
@@ -37,15 +38,21 @@ const { response } = await GrpcClient.unaryCall(
   headers,
   { deadlineSeconds: 60 } // optional per-RPC override
 );
+
+// Client streaming: many request chunks, one response
+const stream = GrpcClient.clientStreamCall('/package.Service/Upload', headers);
+await stream.requests.send(chunk1);
+await stream.requests.send(chunk2);
+await stream.requests.complete();
+const { response: uploadResponse } = await stream;
 ```
 
-Unary and server streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
+Unary, server streaming, and client streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
 
 ## TODOs
 
 Gaps vs a full gRPC client (not yet supported or not exposed):
 
-- **Client streaming** — native hooks exist; no public JS API on `GrpcClient`
 - **Bidirectional streaming** — not implemented
 - **TLS options** — plaintext vs default TLS only; no custom CA, client certs, or mTLS
 - **Multiple channels / hosts** — single global host; no concurrent channels
@@ -54,7 +61,6 @@ Gaps vs a full gRPC client (not yet supported or not exposed):
 - **Cross-platform connection events** — Android-only (`onConnectionStateChange`, `enterIdle`, …)
 - **Codegen / stubs** — raw method paths + bytes; no generated service clients
 
-Done in this fork: global + per-RPC deadlines (`setCallDeadlineSeconds` / `options.deadlineSeconds`); Jest unit tests with mocked `NativeModules.Grpc`.
 
 ## License
 

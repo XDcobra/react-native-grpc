@@ -4,7 +4,6 @@
  */
 
 jest.mock('react-native', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { mockGrpc, grpcCallListeners } = require('./mockNativeGrpc');
   return {
     Platform: {
@@ -168,5 +167,76 @@ describe('GrpcClient.serverStreamCall', () => {
 
     await call;
     expect(chunks).toEqual([new Uint8Array([1]), new Uint8Array([2])]);
+  });
+});
+
+describe('GrpcClient.clientStreamCall', () => {
+  it('sends chunks with headers/deadline on first send, then finishes', async () => {
+    const call = GrpcClient.clientStreamCall(
+      '/svc/ClientStream',
+      { authorization: 'Bearer y' },
+      { deadlineSeconds: 60 }
+    );
+
+    await call.requests.send(new Uint8Array([1, 2]));
+    expect(mockGrpc.clientStreamingCall).toHaveBeenCalledTimes(1);
+    const [id, path, obj1, headers1] = mockGrpc.clientStreamingCall.mock
+      .calls[0] as any;
+    expect(path).toBe('/svc/ClientStream');
+    expect(obj1.data).toBe(fromByteArray(new Uint8Array([1, 2])));
+    expect(obj1.deadlineSeconds).toBe(60);
+    expect(headers1).toEqual({ authorization: 'Bearer y' });
+
+    await call.requests.send(new Uint8Array([3]));
+    expect(mockGrpc.clientStreamingCall).toHaveBeenCalledTimes(2);
+    const [id2, , obj2, headers2] = mockGrpc.clientStreamingCall.mock
+      .calls[1] as any;
+    expect(id2).toBe(id);
+    expect(obj2.data).toBe(fromByteArray(new Uint8Array([3])));
+    expect(obj2.deadlineSeconds).toBeUndefined();
+    expect(headers2).toEqual({});
+
+    await call.requests.complete();
+    expect(mockGrpc.finishClientStreaming).toHaveBeenCalledWith(id);
+
+    const resBytes = new Uint8Array([9]);
+    emitGrpcCall({ id, type: 'headers', payload: { ok: '1' } });
+    emitGrpcCall({
+      id,
+      type: 'response',
+      payload: fromByteArray(resBytes),
+    });
+    emitGrpcCall({ id, type: 'trailers', payload: { 'grpc-status': '0' } });
+
+    const completed = await call;
+    expect(completed.response).toEqual(resBytes);
+    expect(completed.headers).toEqual({ ok: '1' });
+    expect(completed.status).toBe(0);
+  });
+
+  it('rejects with GrpcError on native error event', async () => {
+    const call = GrpcClient.clientStreamCall('/svc/FailStream');
+    await call.requests.send(new Uint8Array([0]));
+    const [id] = mockGrpc.clientStreamingCall.mock.calls[0] as any;
+
+    emitGrpcCall({
+      id,
+      type: 'error',
+      error: 'INTERNAL',
+      code: 13,
+    });
+
+    await expect(call).rejects.toBeInstanceOf(GrpcError);
+    await expect(call).rejects.toMatchObject({ error: 'INTERNAL', code: 13 });
+  });
+
+  it('calls cancelGrpcCall when cancelled', async () => {
+    const call = GrpcClient.clientStreamCall('/svc/CancelStream');
+    await call.requests.send(new Uint8Array([0]));
+    const [id] = mockGrpc.clientStreamingCall.mock.calls[0] as any;
+
+    call.cancel();
+    await Promise.resolve();
+    expect(mockGrpc.cancelGrpcCall).toHaveBeenCalledWith(id);
   });
 });

@@ -28,6 +28,7 @@
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "lint:fix": "eslint '**/*.{js,ts,tsx}' --fix",
     "build": "bob build",
+    "prepare": "bob build",
     "release": "release-it",
     "example": "yarn --cwd example",
     "pods": "cd example && pod-install --quiet",
@@ -140,7 +141,8 @@
     "singleQuote": true,
     "tabWidth": 2,
     "trailingComma": "es5",
-    "useTabs": false
+    "useTabs": false,
+    "endOfLine": "auto"
   },
   "react-native-builder-bob": {
     "source": "src",
