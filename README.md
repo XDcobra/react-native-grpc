@@ -15,11 +15,14 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 - Multiple concurrent channels via `createChannel` / `GrpcChannel` (immutable per-channel config)
 - Interceptors via `createChannel({ interceptors })` / `GrpcClient.setInterceptors` (auth, logging, remapping)
 - Unary retry / hedging via `createChannel({ retry | hedging })` / `GrpcClient.setRetryPolicy` / `setHedgingPolicy` ([gRFC A6](https://github.com/grpc/proposal/blob/master/A6-client-retries.md)-style)
+- Typed clients via Protobuf-ES `createClient` (Buf + `protoc-gen-es`)
 
 ## Installation
 
 ```sh
 npm install @xdcobra/react-native-grpc
+# Typed clients (optional peer):
+npm install @bufbuild/protobuf
 # or
 npm install git+https://github.com/XDcobra/react-native-grpc.git
 ```
@@ -74,6 +77,54 @@ await bidi.requests.send(chunk2);
 await bidi.requests.complete(); // half-close outbound
 const done = await bidi; // resolves on trailers
 ```
+
+### Typed clients (Buf + createClient)
+
+Generate messages **and** `GenService` schemas with Buf + `@bufbuild/protoc-gen-es` (no custom plugin). Then call `createClient(service, GrpcClient | channel)`.
+
+```yaml
+# buf.gen.yaml
+version: v2
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    opt: target=ts
+```
+
+```sh
+npm i @bufbuild/protobuf
+npm i -D @bufbuild/buf @bufbuild/protoc-gen-es
+npx buf generate
+```
+
+```ts
+import { create } from '@bufbuild/protobuf';
+import { createClient, GrpcClient } from '@xdcobra/react-native-grpc';
+import { ExampleRequestSchema, Examples } from './gen/example_pb';
+
+GrpcClient.setHost('api.example.com:443');
+GrpcClient.initGrpcChannel();
+
+const client = createClient(Examples, GrpcClient);
+// or: createClient(Examples, createChannel({ host: '...' }))
+
+const res = await client.sendExampleMessage(
+  create(ExampleRequestSchema, { message: 'Ada' }),
+  { authorization: 'Bearer …' },
+  { deadlineSeconds: 30 }
+);
+```
+
+| `methodKind` | Client shape |
+|---|---|
+| `unary` | `Promise<O>` |
+| `server_streaming` | async iterable + `.responses` / `.cancel()` |
+| `client_streaming` | `{ send(I), complete(), response: Promise<O> }` |
+| `bidi_streaming` | `{ send(I), complete(), responses }` (+ async iterable) |
+
+Path form: `/${service.typeName}/${MethodName}` (protobuf RPC name). Raw `unaryCall` / stream APIs remain for BYO bytes.
+
+Subpath import (optional): `import { createClient } from '@xdcobra/react-native-grpc/create-client'`.
 
 ### Multiple channels / hosts
 
@@ -193,7 +244,7 @@ await channel.unaryCall('/package.Service/Method', requestBytes, {}, {
 
 Hedging sends parallel attempts (first success wins; siblings are cancelled). Call deadline applies across the whole retry/hedge chain.
 
-Unary, server streaming, client streaming, and bidirectional streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
+Unary, server streaming, client streaming, and bidirectional streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`) or via `createClient`.
 
 ### TLS matrix
 
@@ -225,7 +276,7 @@ Gaps vs a full gRPC client (not yet supported or not exposed):
 
 - **Retry / hedging — remaining**: DNS/service-config JSON; retry throttling ([gRFC A6](https://github.com/grpc/proposal/blob/master/A6-client-retries.md)); stream retry / transparent retry after first response message; native `enableRetry` / C-core service config (JS unary policies are implemented)
 - **Cross-platform connection events**: Android-only (`onConnectionStateChange`, `enterIdle`, …)
-- **Codegen / stubs**: raw method paths + bytes; no generated service clients
+- **Codegen — advanced**: no custom `protoc` plugin; Buf + `createClient` covers the typed path (raw bytes remain available)
 
 
 ## License

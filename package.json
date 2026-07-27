@@ -7,6 +7,21 @@
   "types": "lib/typescript/index.d.ts",
   "react-native": "src/index",
   "source": "src/index",
+  "exports": {
+    ".": {
+      "react-native": "./src/index.ts",
+      "types": "./lib/typescript/index.d.ts",
+      "module": "./lib/module/index.js",
+      "default": "./lib/commonjs/index.js"
+    },
+    "./create-client": {
+      "react-native": "./src/create-client.ts",
+      "types": "./lib/typescript/create-client.d.ts",
+      "module": "./lib/module/create-client.js",
+      "default": "./lib/commonjs/create-client.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "src",
     "lib",
@@ -60,6 +75,7 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "@bufbuild/protobuf": "^2.13.0",
     "@react-native-community/eslint-config": "^3.0.0",
     "@release-it/keep-a-changelog": "^3.0.0",
     "@types/jest": "^26.0.23",
@@ -81,8 +97,14 @@
     "xcode": "^3.0.1"
   },
   "peerDependencies": {
+    "@bufbuild/protobuf": "^2.0.0",
     "react": "*",
     "react-native": "*"
+  },
+  "peerDependenciesMeta": {
+    "@bufbuild/protobuf": {
+      "optional": true
+    }
   },
   "jest": {
     "preset": "react-native",
@@ -92,6 +114,17 @@
     "modulePathIgnorePatterns": [
       "<rootDir>/example/node_modules",
       "<rootDir>/lib/"
+    ],
+    "moduleNameMapper": {
+      "^@bufbuild/protobuf/codegenv2$": "<rootDir>/node_modules/@bufbuild/protobuf/dist/commonjs/codegenv2/index.js",
+      "^@bufbuild/protobuf/codegenv1$": "<rootDir>/node_modules/@bufbuild/protobuf/dist/commonjs/codegenv1/index.js",
+      "^@bufbuild/protobuf/reflect$": "<rootDir>/node_modules/@bufbuild/protobuf/dist/commonjs/reflect/index.js",
+      "^@bufbuild/protobuf/wkt$": "<rootDir>/node_modules/@bufbuild/protobuf/dist/commonjs/wkt/index.js",
+      "^@bufbuild/protobuf/wire$": "<rootDir>/node_modules/@bufbuild/protobuf/dist/commonjs/wire/index.js",
+      "^@bufbuild/protobuf$": "<rootDir>/node_modules/@bufbuild/protobuf/dist/commonjs/index.js"
+    },
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|@bufbuild)/)"
     ]
   },
   "husky": {
@@ -139,7 +172,9 @@
   "eslintIgnore": [
     "node_modules/",
     "lib/",
-    "example/src/_proto/"
+    "example/src/_proto/",
+    "example/src/gen/",
+    "src/__fixtures__/"
   ],
   "prettier": {
     "quoteProps": "consistent",

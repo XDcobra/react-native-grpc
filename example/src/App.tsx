@@ -1,10 +1,12 @@
 import 'text-encoding';
-import { GrpcClient } from '@krishnafkh/react-native-grpc';
+import { create } from '@bufbuild/protobuf';
+import { createClient, GrpcClient } from '@xdcobra/react-native-grpc';
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { RNGrpcTransport } from './transport';
-import { ExampleRequest } from './_proto/example';
-import { ExamplesClient } from './_proto/example.client';
+import {
+  ExampleRequestSchema,
+  Examples,
+} from './gen/example_pb';
 
 export default function App() {
   const [result, setResult] = useState<string>();
@@ -13,28 +15,17 @@ export default function App() {
     GrpcClient.setHost('example.com');
     GrpcClient.setInsecure(true);
 
-    const client = new ExamplesClient(new RNGrpcTransport());
-    const request = ExampleRequest.create({
+    const client = createClient(Examples, GrpcClient);
+    const request = create(ExampleRequestSchema, {
       message: 'Hello World',
     });
 
-    const abort = new AbortController();
-
-    const unaryCall = client.sendExampleMessage(request, {
-      abort: abort.signal,
-    });
-
-    // unaryCall.then(result => console.log(result));
-
-    unaryCall.response.then((response) => setResult(response.message));
-
-    // const stream = client.getExampleMessages(message, {
-    //   abort: abort.signal,
-    // });
-
-    // // stream.response.onMessage(msg => console.log(msg.message))
-    // // stream.response.onComplete(() => console.log('Completed!'));
-    // // stream.response.onError(err => console.log(err))
+    client
+      .sendExampleMessage(request)
+      .then((response) => setResult(response.message))
+      .catch(() => {
+        // Demo host is unreachable; leave result empty.
+      });
   }, []);
 
   return (

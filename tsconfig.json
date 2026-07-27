@@ -2,7 +2,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@krishnafkh/react-native-grpc": [
+      "@xdcobra/react-native-grpc": [
         "./src/index"
       ]
     },
