@@ -4,71 +4,18 @@ import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { GrpcBidiStreamingCall } from './bidi-streaming';
 import { GrpcClientStreamingCall, ServerInputStream } from './client-streaming';
 import { GrpcError } from './errors';
+import { GrpcRequestObject, nativeGrpc } from './native';
 import {
   GrpcServerStreamingCall,
   ServerOutputStream,
 } from './server-streaming';
-import { GrpcCallOptions, GrpcMetadata, GrpcTlsOptions } from './types';
+import {
+  DEFAULT_CHANNEL_ID,
+  GrpcCallOptions,
+  GrpcMetadata,
+  GrpcTlsOptions,
+} from './types';
 import { GrpcUnaryCall } from './unary';
-
-type GrpcRequestObject = {
-  data: string;
-  /** Optional per-call override; native falls back to global default when omitted. */
-  deadlineSeconds?: number;
-};
-
-type GrpcType = {
-  getHost: () => Promise<string>;
-  getIsInsecure: () => Promise<boolean>;
-  setHost(host: string): void;
-  setInsecure(insecure: boolean): void;
-  setTlsOptions(options: {
-    rootCertsPem: string | null;
-    certificateChainPem: string | null;
-    privateKeyPem: string | null;
-    hostNameOverride: string | null;
-    spkiSha256Pins: string[] | null;
-  }): void;
-  setCompression(enable: boolean, compressorName: string): void;
-  setResponseSizeLimit(limitInBytes: number): void;
-  setCallDeadlineSeconds(seconds: number): void;
-  initGrpcChannel(): void;
-  unaryCall(
-    id: number,
-    path: string,
-    obj: GrpcRequestObject,
-    requestHeaders?: GrpcMetadata
-  ): Promise<void>;
-  serverStreamingCall(
-    id: number,
-    path: string,
-    obj: GrpcRequestObject,
-    requestHeaders?: GrpcMetadata
-  ): Promise<void>;
-  cancelGrpcCall: (id: number) => Promise<boolean>;
-  clientStreamingCall(
-    id: number,
-    path: string,
-    obj: GrpcRequestObject,
-    requestHeaders?: GrpcMetadata
-  ): Promise<void>;
-  bidiStreamingCall(
-    id: number,
-    path: string,
-    obj: GrpcRequestObject,
-    requestHeaders?: GrpcMetadata
-  ): Promise<void>;
-  finishClientStreaming(id: number): Promise<void>;
-  resetConnection(message: string): void;
-  setKeepAlive(
-    enable: boolean,
-    keepAliveTime: number,
-    keepAliveTimeOut: number
-  ): void;
-  onConnectionStateChange(): void;
-  setUiLogEnabled(enable: boolean): void;
-  enterIdle(): void;
-};
 
 type GrpcEventType = 'response' | 'error' | 'headers' | 'trailers';
 
@@ -97,14 +44,6 @@ type GrpcEvent = {
   id: number;
   type: GrpcEventType;
 } & GrpcEventPayload;
-
-function nativeGrpc(): GrpcType {
-  const grpc = (NativeModules as { Grpc: GrpcType }).Grpc;
-  if (!grpc) {
-    throw new Error('NativeModules.Grpc is not linked');
-  }
-  return grpc;
-}
 
 const Emitter = new NativeEventEmitter(NativeModules.Grpc);
 
@@ -207,8 +146,272 @@ function buildRequestObject(
   return obj;
 }
 
-export class GrpcClient {
+export function normalizeTlsOptions(options: GrpcTlsOptions = {}): {
+  rootCertsPem: string | null;
+  certificateChainPem: string | null;
+  privateKeyPem: string | null;
+  hostNameOverride: string | null;
+  spkiSha256Pins: string[] | null;
+} {
+  const rootCertsPem = options.rootCertsPem ?? null;
+  const certificateChainPem = options.certificateChainPem ?? null;
+  const privateKeyPem = options.privateKeyPem ?? null;
+  const hostNameOverride = options.hostNameOverride ?? null;
+  const spkiSha256Pins =
+    options.spkiSha256Pins && options.spkiSha256Pins.length > 0
+      ? options.spkiSha256Pins
+      : null;
+
+  const hasCert = !!certificateChainPem;
+  const hasKey = !!privateKeyPem;
+  if (hasCert !== hasKey) {
+    throw new Error('mTLS requires both certificateChainPem and privateKeyPem');
+  }
+
+  return {
+    rootCertsPem,
+    certificateChainPem,
+    privateKeyPem,
+    hostNameOverride,
+    spkiSha256Pins,
+  };
+}
+
+/**
+ * Shared RPC surface bound to a native channel id.
+ * Used by the singleton {@link GrpcClient} and by {@link GrpcChannel}.
+ */
+export class GrpcCallApi {
+  constructor(protected readonly channelId: string) {}
+
+  unaryCall(
+    method: string,
+    data: Uint8Array,
+    requestHeaders?: GrpcMetadata,
+    options?: GrpcCallOptions
+  ): GrpcUnaryCall {
+    const obj = buildRequestObject(data, options);
+
+    const id = getId();
+    const abort = new AbortController();
+
+    abort.signal.addEventListener('abort', () => {
+      nativeGrpc().cancelGrpcCall(id);
+    });
+
+    const response = createDeferred<Uint8Array>(abort.signal);
+    const headers = createDeferred<GrpcMetadata>(abort.signal);
+    const trailers = createDeferred<GrpcMetadata>(abort.signal);
+
+    deferredMap[id] = {
+      response,
+      headers,
+      trailers,
+    };
+
+    nativeGrpc().unaryCall(
+      id,
+      method,
+      obj,
+      requestHeaders || {},
+      this.channelId
+    );
+
+    const call = new GrpcUnaryCall(
+      method,
+      data,
+      requestHeaders || {},
+      headers.promise,
+      response.promise,
+      trailers.promise,
+      abort
+    );
+
+    call.then(
+      (result) => result,
+      () => abort.abort()
+    );
+
+    return call;
+  }
+
+  serverStreamCall(
+    method: string,
+    data: Uint8Array,
+    requestHeaders?: GrpcMetadata,
+    options?: GrpcCallOptions
+  ): GrpcServerStreamingCall {
+    const obj = buildRequestObject(data, options);
+
+    const id = getId();
+    const abort = new AbortController();
+
+    abort.signal.addEventListener('abort', () => {
+      nativeGrpc().cancelGrpcCall(id);
+    });
+
+    const headers = createDeferred<GrpcMetadata>(abort.signal);
+    const trailers = createDeferred<GrpcMetadata>(abort.signal);
+
+    const stream = new ServerOutputStream();
+
+    deferredMap[id] = {
+      headers,
+      trailers,
+      data: stream,
+    };
+
+    nativeGrpc().serverStreamingCall(
+      id,
+      method,
+      obj,
+      requestHeaders || {},
+      this.channelId
+    );
+
+    const call = new GrpcServerStreamingCall(
+      method,
+      data,
+      requestHeaders || {},
+      headers.promise,
+      stream,
+      trailers.promise,
+      abort
+    );
+
+    call.then(
+      (result) => result,
+      () => abort.abort()
+    );
+
+    return call;
+  }
+
+  /**
+   * Client-streaming RPC: many request messages, one response.
+   * Native call starts on the first `requests.send(...)`.
+   */
+  clientStreamCall(
+    method: string,
+    requestHeaders?: GrpcMetadata,
+    options?: GrpcCallOptions
+  ): GrpcClientStreamingCall {
+    const id = getId();
+    const abort = new AbortController();
+    const headersMeta = requestHeaders || {};
+    const channelId = this.channelId;
+
+    abort.signal.addEventListener('abort', () => {
+      nativeGrpc().cancelGrpcCall(id);
+    });
+
+    const response = createDeferred<Uint8Array>(abort.signal);
+    const headers = createDeferred<GrpcMetadata>(abort.signal);
+    const trailers = createDeferred<GrpcMetadata>(abort.signal);
+
+    deferredMap[id] = {
+      response,
+      headers,
+      trailers,
+    };
+
+    const requests = new ServerInputStream(
+      (data, isFirst) => {
+        const obj = buildRequestObject(data, isFirst ? options : undefined);
+        return nativeGrpc().clientStreamingCall(
+          id,
+          method,
+          obj,
+          isFirst ? headersMeta : {},
+          channelId
+        );
+      },
+      () => nativeGrpc().finishClientStreaming(id)
+    );
+
+    const call = new GrpcClientStreamingCall(
+      method,
+      headersMeta,
+      requests,
+      headers.promise,
+      response.promise,
+      trailers.promise,
+      abort
+    );
+
+    call.then(
+      (result) => result,
+      () => abort.abort()
+    );
+
+    return call;
+  }
+
+  /**
+   * Bidirectional streaming RPC: interleaved request and response messages.
+   * Native call starts on the first `requests.send(...)`.
+   * Registers only the `data` stream (plus headers/trailers) — no unary `response`.
+   */
+  bidiStreamCall(
+    method: string,
+    requestHeaders?: GrpcMetadata,
+    options?: GrpcCallOptions
+  ): GrpcBidiStreamingCall {
+    const id = getId();
+    const abort = new AbortController();
+    const headersMeta = requestHeaders || {};
+    const channelId = this.channelId;
+
+    abort.signal.addEventListener('abort', () => {
+      nativeGrpc().cancelGrpcCall(id);
+    });
+
+    const headers = createDeferred<GrpcMetadata>(abort.signal);
+    const trailers = createDeferred<GrpcMetadata>(abort.signal);
+    const stream = new ServerOutputStream();
+
+    deferredMap[id] = {
+      headers,
+      trailers,
+      data: stream,
+    };
+
+    const requests = new ServerInputStream(
+      (data, isFirst) => {
+        const obj = buildRequestObject(data, isFirst ? options : undefined);
+        return nativeGrpc().bidiStreamingCall(
+          id,
+          method,
+          obj,
+          isFirst ? headersMeta : {},
+          channelId
+        );
+      },
+      () => nativeGrpc().finishClientStreaming(id)
+    );
+
+    const call = new GrpcBidiStreamingCall(
+      method,
+      headersMeta,
+      requests,
+      headers.promise,
+      stream,
+      trailers.promise,
+      abort
+    );
+
+    call.then(
+      (result) => result,
+      () => abort.abort()
+    );
+
+    return call;
+  }
+}
+
+export class GrpcClient extends GrpcCallApi {
   constructor() {
+    super(DEFAULT_CHANNEL_ID);
     Emitter.addListener('grpc-call', handleGrpcEvent);
   }
   destroy() {
@@ -230,32 +433,10 @@ export class GrpcClient {
    * Replace channel TLS options (custom CA, mTLS, hostname override).
    * Each call replaces the previous config; omitted fields are cleared.
    * Apply before `initGrpcChannel()`. Ignored while insecure/plaintext.
+   * For multi-host apps prefer {@link createChannel} with `tls` in config.
    */
   setTlsOptions(options: GrpcTlsOptions = {}): void {
-    const rootCertsPem = options.rootCertsPem ?? null;
-    const certificateChainPem = options.certificateChainPem ?? null;
-    const privateKeyPem = options.privateKeyPem ?? null;
-    const hostNameOverride = options.hostNameOverride ?? null;
-    const spkiSha256Pins =
-      options.spkiSha256Pins && options.spkiSha256Pins.length > 0
-        ? options.spkiSha256Pins
-        : null;
-
-    const hasCert = !!certificateChainPem;
-    const hasKey = !!privateKeyPem;
-    if (hasCert !== hasKey) {
-      throw new Error(
-        'mTLS requires both certificateChainPem and privateKeyPem'
-      );
-    }
-
-    nativeGrpc().setTlsOptions({
-      rootCertsPem,
-      certificateChainPem,
-      privateKeyPem,
-      hostNameOverride,
-      spkiSha256Pins,
-    });
+    nativeGrpc().setTlsOptions(normalizeTlsOptions(options));
   }
   setCompression(enable: boolean, compressorName: string): void {
     nativeGrpc().setCompression(enable, compressorName);
@@ -299,223 +480,9 @@ export class GrpcClient {
     nativeGrpc().enterIdle();
   }
 
-  unaryCall(
-    method: string,
-    data: Uint8Array,
-    requestHeaders?: GrpcMetadata,
-    options?: GrpcCallOptions
-  ): GrpcUnaryCall {
-    const obj = buildRequestObject(data, options);
-
-    const id = getId();
-    const abort = new AbortController();
-
-    abort.signal.addEventListener('abort', () => {
-      nativeGrpc().cancelGrpcCall(id);
-    });
-
-    const response = createDeferred<Uint8Array>(abort.signal);
-    const headers = createDeferred<GrpcMetadata>(abort.signal);
-    const trailers = createDeferred<GrpcMetadata>(abort.signal);
-
-    deferredMap[id] = {
-      response,
-      headers,
-      trailers,
-    };
-
-    nativeGrpc().unaryCall(id, method, obj, requestHeaders || {});
-
-    const call = new GrpcUnaryCall(
-      method,
-      data,
-      requestHeaders || {},
-      headers.promise,
-      response.promise,
-      trailers.promise,
-      abort
-    );
-
-    call.then(
-      (result) => result,
-      () => abort.abort()
-    );
-
-    return call;
-  }
-  serverStreamCall(
-    method: string,
-    data: Uint8Array,
-    requestHeaders?: GrpcMetadata,
-    options?: GrpcCallOptions
-  ): GrpcServerStreamingCall {
-    const obj = buildRequestObject(data, options);
-
-    const id = getId();
-    const abort = new AbortController();
-
-    abort.signal.addEventListener('abort', () => {
-      nativeGrpc().cancelGrpcCall(id);
-    });
-
-    const headers = createDeferred<GrpcMetadata>(abort.signal);
-    const trailers = createDeferred<GrpcMetadata>(abort.signal);
-
-    const stream = new ServerOutputStream();
-
-    deferredMap[id] = {
-      headers,
-      trailers,
-      data: stream,
-    };
-
-    nativeGrpc().serverStreamingCall(id, method, obj, requestHeaders || {});
-
-    const call = new GrpcServerStreamingCall(
-      method,
-      data,
-      requestHeaders || {},
-      headers.promise,
-      stream,
-      trailers.promise,
-      abort
-    );
-
-    call.then(
-      (result) => result,
-      () => abort.abort()
-    );
-
-    return call;
-  }
-
-  /**
-   * Client-streaming RPC: many request messages, one response.
-   * Native call starts on the first `requests.send(...)`.
-   */
-  clientStreamCall(
-    method: string,
-    requestHeaders?: GrpcMetadata,
-    options?: GrpcCallOptions
-  ): GrpcClientStreamingCall {
-    const id = getId();
-    const abort = new AbortController();
-    const headersMeta = requestHeaders || {};
-
-    abort.signal.addEventListener('abort', () => {
-      nativeGrpc().cancelGrpcCall(id);
-    });
-
-    const response = createDeferred<Uint8Array>(abort.signal);
-    const headers = createDeferred<GrpcMetadata>(abort.signal);
-    const trailers = createDeferred<GrpcMetadata>(abort.signal);
-
-    deferredMap[id] = {
-      response,
-      headers,
-      trailers,
-    };
-
-    const requests = new ServerInputStream(
-      (data, isFirst) => {
-        const obj = buildRequestObject(data, isFirst ? options : undefined);
-        return nativeGrpc().clientStreamingCall(
-          id,
-          method,
-          obj,
-          isFirst ? headersMeta : {}
-        );
-      },
-      () => nativeGrpc().finishClientStreaming(id)
-    );
-
-    const call = new GrpcClientStreamingCall(
-      method,
-      headersMeta,
-      requests,
-      headers.promise,
-      response.promise,
-      trailers.promise,
-      abort
-    );
-
-    call.then(
-      (result) => result,
-      () => abort.abort()
-    );
-
-    return call;
-  }
-
-  /**
-   * Bidirectional streaming RPC: interleaved request and response messages.
-   * Native call starts on the first `requests.send(...)`.
-   * Registers only the `data` stream (plus headers/trailers) — no unary `response`.
-   */
-  bidiStreamCall(
-    method: string,
-    requestHeaders?: GrpcMetadata,
-    options?: GrpcCallOptions
-  ): GrpcBidiStreamingCall {
-    const id = getId();
-    const abort = new AbortController();
-    const headersMeta = requestHeaders || {};
-
-    abort.signal.addEventListener('abort', () => {
-      nativeGrpc().cancelGrpcCall(id);
-    });
-
-    const headers = createDeferred<GrpcMetadata>(abort.signal);
-    const trailers = createDeferred<GrpcMetadata>(abort.signal);
-    const stream = new ServerOutputStream();
-
-    deferredMap[id] = {
-      headers,
-      trailers,
-      data: stream,
-    };
-
-    const requests = new ServerInputStream(
-      (data, isFirst) => {
-        const obj = buildRequestObject(data, isFirst ? options : undefined);
-        return nativeGrpc().bidiStreamingCall(
-          id,
-          method,
-          obj,
-          isFirst ? headersMeta : {}
-        );
-      },
-      () => nativeGrpc().finishClientStreaming(id)
-    );
-
-    const call = new GrpcBidiStreamingCall(
-      method,
-      headersMeta,
-      requests,
-      headers.promise,
-      stream,
-      trailers.promise,
-      abort
-    );
-
-    call.then(
-      (result) => result,
-      () => abort.abort()
-    );
-
-    return call;
-  }
-
   private isAndroid(): Boolean {
     return Platform.OS === 'android';
   }
 }
 
-/** Lazy binding to NativeModules.Grpc (works with Jest mocks / late link). */
-export const Grpc: GrpcType = new Proxy({} as GrpcType, {
-  get(_target, prop) {
-    const native = nativeGrpc();
-    const value = (native as any)[prop as string];
-    return typeof value === 'function' ? value.bind(native) : value;
-  },
-});
+export { Grpc } from './native';

@@ -3,6 +3,8 @@
 #import <GRPCClient/GRPCCall.h>
 #import <GRPCClient/GRPCTransport.h>
 
+static NSString * const kGrpcDefaultChannelId = @"default";
+
 @interface GrpcResponseHandler : NSObject <GRPCResponseHandler>
 
 - (instancetype)initWithInitialMetadataCallback:(void (^)(NSDictionary *))initialMetadataCallback
@@ -84,11 +86,15 @@
 @implementation Grpc {
     bool hasListeners;
     NSMutableDictionary<NSNumber *, GRPCCall2 *> *calls;
+    /** channelId → mutable config dictionary (extra channels; default uses properties). */
+    NSMutableDictionary<NSString *, NSMutableDictionary *> *channelConfigs;
 }
 
 - (instancetype)init {
     if (self = [super init]) {
         calls = [[NSMutableDictionary alloc] init];
+        channelConfigs = [[NSMutableDictionary alloc] init];
+        self.grpcCallDeadlineSeconds = 120;
     }
 
     return self;
@@ -110,37 +116,79 @@
     return @[@"grpc-call"];
 }
 
-- (GRPCCallOptions *)getCallOptionsWithHeaders:(NSDictionary *)headers
-                              deadlineSeconds:(NSNumber *)deadlineSeconds {
-    GRPCMutableCallOptions *options = [[GRPCMutableCallOptions alloc] init];
-    options.initialMetadata = headers;
-    options.transport = self.grpcInsecure ? GRPCDefaultTransportImplList.core_insecure : GRPCDefaultTransportImplList.core_secure;
-
-    if (!self.grpcInsecure) {
+- (NSMutableDictionary *)configForChannelId:(NSString *)channelId {
+    NSString *key = (channelId.length > 0) ? channelId : kGrpcDefaultChannelId;
+    if ([key isEqualToString:kGrpcDefaultChannelId]) {
+        NSMutableDictionary *cfg = [NSMutableDictionary dictionary];
+        if (self.grpcHost != nil) {
+            cfg[@"host"] = self.grpcHost;
+        }
+        cfg[@"insecure"] = @(self.grpcInsecure);
+        cfg[@"callDeadlineSeconds"] = @(self.grpcCallDeadlineSeconds > 0 ? self.grpcCallDeadlineSeconds : 120);
+        if (self.grpcResponseSizeLimit != nil) {
+            cfg[@"responseSizeLimit"] = self.grpcResponseSizeLimit;
+        }
         if (self.grpcRootCertsPem.length > 0) {
-            options.PEMRootCertificates = self.grpcRootCertsPem;
+            cfg[@"rootCertsPem"] = self.grpcRootCertsPem;
         }
         if (self.grpcCertificateChainPem.length > 0) {
-            options.PEMCertificateChain = self.grpcCertificateChainPem;
+            cfg[@"certificateChainPem"] = self.grpcCertificateChainPem;
         }
         if (self.grpcPrivateKeyPem.length > 0) {
-            options.PEMPrivateKey = self.grpcPrivateKeyPem;
+            cfg[@"privateKeyPem"] = self.grpcPrivateKeyPem;
         }
         if (self.grpcHostNameOverride.length > 0) {
-            options.hostNameOverride = self.grpcHostNameOverride;
+            cfg[@"hostNameOverride"] = self.grpcHostNameOverride;
+        }
+        if (self.grpcSpkiSha256Pins.count > 0) {
+            cfg[@"spkiSha256Pins"] = self.grpcSpkiSha256Pins;
+        }
+        return cfg;
+    }
+    return channelConfigs[key];
+}
+
+- (GRPCCallOptions *)getCallOptionsWithHeaders:(NSDictionary *)headers
+                              deadlineSeconds:(NSNumber *)deadlineSeconds
+                                channelConfig:(NSDictionary *)cfg {
+    GRPCMutableCallOptions *options = [[GRPCMutableCallOptions alloc] init];
+    options.initialMetadata = headers;
+    BOOL insecure = [cfg[@"insecure"] boolValue];
+    options.transport = insecure ? GRPCDefaultTransportImplList.core_insecure : GRPCDefaultTransportImplList.core_secure;
+
+    if (!insecure) {
+        NSString *rootCerts = cfg[@"rootCertsPem"];
+        NSString *certChain = cfg[@"certificateChainPem"];
+        NSString *privateKey = cfg[@"privateKeyPem"];
+        NSString *hostOverride = cfg[@"hostNameOverride"];
+        if (rootCerts.length > 0) {
+            options.PEMRootCertificates = rootCerts;
+        }
+        if (certChain.length > 0) {
+            options.PEMCertificateChain = certChain;
+        }
+        if (privateKey.length > 0) {
+            options.PEMPrivateKey = privateKey;
+        }
+        if (hostOverride.length > 0) {
+            options.hostNameOverride = hostOverride;
         }
     }
 
-    if (self.grpcResponseSizeLimit != nil) {
-        options.responseSizeLimit = self.grpcResponseSizeLimit.unsignedLongValue;
+    NSNumber *responseSizeLimit = cfg[@"responseSizeLimit"];
+    if (responseSizeLimit != nil) {
+        options.responseSizeLimit = responseSizeLimit.unsignedLongValue;
     }
     NSTimeInterval deadline;
     if (deadlineSeconds != nil) {
         deadline = MAX(0, [deadlineSeconds doubleValue]);
-    } else if (self.grpcCallDeadlineSeconds > 0) {
-        deadline = self.grpcCallDeadlineSeconds;
     } else {
-        deadline = 120;
+        NSNumber *channelDeadline = cfg[@"callDeadlineSeconds"];
+        if (channelDeadline != nil && [channelDeadline doubleValue] > 0) {
+            deadline = [channelDeadline doubleValue];
+        } else {
+            deadline = 120;
+        }
     }
     if (deadline > 0) {
         options.timeout = deadline;
@@ -230,16 +278,115 @@ RCT_EXPORT_METHOD(setCallDeadlineSeconds:
     self.grpcCallDeadlineSeconds = MAX(0, [seconds doubleValue]);
 }
 
+/** No-op on iOS (host applied per call); kept for API parity with Android. */
+RCT_EXPORT_METHOD(initGrpcChannel) {
+}
+
+RCT_EXPORT_METHOD(createChannel:
+    (NSString *)channelId
+        config:(NSDictionary *)config) {
+    if (channelId.length == 0) {
+        @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                       reason:@"channelId is required"
+                                     userInfo:nil];
+    }
+    if ([channelId isEqualToString:kGrpcDefaultChannelId]) {
+        @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                       reason:@"channelId \"default\" is reserved for GrpcClient"
+                                     userInfo:nil];
+    }
+    NSString *host = config[@"host"];
+    if (![host isKindOfClass:[NSString class]] || host.length == 0) {
+        @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                       reason:@"createChannel requires host"
+                                     userInfo:nil];
+    }
+
+    NSMutableDictionary *cfg = [NSMutableDictionary dictionary];
+    cfg[@"host"] = host;
+    cfg[@"insecure"] = @([config[@"insecure"] boolValue]);
+    NSNumber *deadline = config[@"callDeadlineSeconds"];
+    cfg[@"callDeadlineSeconds"] = (deadline != nil && deadline != (id)[NSNull null])
+        ? @(MAX(0, [deadline doubleValue]))
+        : @(120);
+    id responseSize = config[@"responseSizeLimit"];
+    if (responseSize != nil && responseSize != [NSNull null]) {
+        cfg[@"responseSizeLimit"] = responseSize;
+    }
+
+    id tlsObj = config[@"tls"];
+    if ([tlsObj isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *tls = (NSDictionary *)tlsObj;
+        NSString *rootCerts = [self tlsStringFromOptions:tls key:@"rootCertsPem"];
+        NSString *certChain = [self tlsStringFromOptions:tls key:@"certificateChainPem"];
+        NSString *privateKey = [self tlsStringFromOptions:tls key:@"privateKeyPem"];
+        NSString *hostOverride = [self tlsStringFromOptions:tls key:@"hostNameOverride"];
+        NSArray<NSString *> *pins = SpkiNormalizePins(tls[@"spkiSha256Pins"]);
+
+        BOOL hasCert = certChain.length > 0;
+        BOOL hasKey = privateKey.length > 0;
+        if (hasCert != hasKey) {
+            @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                           reason:@"mTLS requires both certificateChainPem and privateKeyPem"
+                                         userInfo:nil];
+        }
+        if (pins.count > 0) {
+            if (rootCerts.length == 0) {
+                @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                               reason:@"spkiSha256Pins on iOS requires rootCertsPem (include the pinned leaf or intermediate PEM)"
+                                             userInfo:nil];
+            }
+            NSError *pinError = nil;
+            if (!SpkiPemCertificatesMatchPins(rootCerts, pins, &pinError)) {
+                @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                               reason:pinError.localizedDescription ?: @"SPKI pin mismatch for rootCertsPem"
+                                             userInfo:nil];
+            }
+        }
+        if (rootCerts.length > 0) {
+            cfg[@"rootCertsPem"] = rootCerts;
+        }
+        if (certChain.length > 0) {
+            cfg[@"certificateChainPem"] = certChain;
+        }
+        if (privateKey.length > 0) {
+            cfg[@"privateKeyPem"] = privateKey;
+        }
+        if (hostOverride.length > 0) {
+            cfg[@"hostNameOverride"] = hostOverride;
+        }
+        if (pins.count > 0) {
+            cfg[@"spkiSha256Pins"] = pins;
+        }
+    }
+
+    channelConfigs[channelId] = cfg;
+}
+
+RCT_EXPORT_METHOD(closeChannel:
+    (NSString *)channelId) {
+    if (channelId.length == 0 || [channelId isEqualToString:kGrpcDefaultChannelId]) {
+        return;
+    }
+    [channelConfigs removeObjectForKey:channelId];
+}
+
 RCT_EXPORT_METHOD(unaryCall:
     (nonnull NSNumber*)callId
         path:(NSString*)path
         obj:(NSDictionary*)obj
         headers:(NSDictionary*)headers
+        channelId:(NSString*)channelId
         resolver:(RCTPromiseResolveBlock)resolve
         rejecter:(RCTPromiseRejectBlock)reject) {
     NSData *requestData = [[NSData alloc] initWithBase64EncodedString:[obj valueForKey:@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
 
-    GRPCCall2 *call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj];
+    NSError *startError = nil;
+    GRPCCall2 *call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj channelId:channelId error:&startError];
+    if (call == nil) {
+        reject(@"channel_error", startError.localizedDescription ?: @"Channel not created", startError);
+        return;
+    }
 
     [call writeData:requestData];
     [call finish];
@@ -254,11 +401,17 @@ RCT_EXPORT_METHOD(serverStreamingCall:
         path:(NSString*)path
         obj:(NSDictionary*)obj
         headers:(NSDictionary*)headers
+        channelId:(NSString*)channelId
         resolver:(RCTPromiseResolveBlock)resolve
         rejecter:(RCTPromiseRejectBlock)reject) {
     NSData *requestData = [[NSData alloc] initWithBase64EncodedString:[obj valueForKey:@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
 
-    GRPCCall2 *call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj];
+    NSError *startError = nil;
+    GRPCCall2 *call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj channelId:channelId error:&startError];
+    if (call == nil) {
+        reject(@"channel_error", startError.localizedDescription ?: @"Channel not created", startError);
+        return;
+    }
 
     [call writeData:requestData];
     [call finish];
@@ -288,6 +441,7 @@ RCT_EXPORT_METHOD(clientStreamingCall:
         path:(NSString*)path
         obj:(NSDictionary*)obj
         headers:(NSDictionary*)headers
+        channelId:(NSString*)channelId
         resolver:(RCTPromiseResolveBlock)resolve
         rejecter:(RCTPromiseRejectBlock)reject) {
     NSData *requestData = [[NSData alloc] initWithBase64EncodedString:[obj valueForKey:@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
@@ -295,7 +449,12 @@ RCT_EXPORT_METHOD(clientStreamingCall:
     GRPCCall2 *call = [calls objectForKey:callId];
 
     if (call == nil) {
-        call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj];
+        NSError *startError = nil;
+        call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj channelId:channelId error:&startError];
+        if (call == nil) {
+            reject(@"channel_error", startError.localizedDescription ?: @"Channel not created", startError);
+            return;
+        }
 
         [calls setObject:call forKey:callId];
     }
@@ -310,6 +469,7 @@ RCT_EXPORT_METHOD(bidiStreamingCall:
         path:(NSString*)path
         obj:(NSDictionary*)obj
         headers:(NSDictionary*)headers
+        channelId:(NSString*)channelId
         resolver:(RCTPromiseResolveBlock)resolve
         rejecter:(RCTPromiseRejectBlock)reject) {
     NSData *requestData = [[NSData alloc] initWithBase64EncodedString:[obj valueForKey:@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
@@ -317,7 +477,12 @@ RCT_EXPORT_METHOD(bidiStreamingCall:
     GRPCCall2 *call = [calls objectForKey:callId];
 
     if (call == nil) {
-        call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj];
+        NSError *startError = nil;
+        call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj channelId:channelId error:&startError];
+        if (call == nil) {
+            reject(@"channel_error", startError.localizedDescription ?: @"Channel not created", startError);
+            return;
+        }
 
         [calls setObject:call forKey:callId];
     }
@@ -345,8 +510,29 @@ RCT_EXPORT_METHOD(finishClientStreaming:
 - (GRPCCall2 *)startGrpcCallWithId:(NSNumber *)callId
                               path:(NSString *)path
                            headers:(NSDictionary *)headers
-                   deadlineFromObj:(NSDictionary *)obj {
-    GRPCRequestOptions *requestOptions = [[GRPCRequestOptions alloc] initWithHost:self.grpcHost
+                   deadlineFromObj:(NSDictionary *)obj
+                         channelId:(NSString *)channelId
+                             error:(NSError **)outError {
+    NSDictionary *cfg = [self configForChannelId:channelId];
+    if (cfg == nil) {
+        if (outError) {
+            *outError = [NSError errorWithDomain:@"Grpc"
+                                            code:0
+                                        userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Unknown channel: %@", channelId]}];
+        }
+        return nil;
+    }
+    NSString *host = cfg[@"host"];
+    if (host.length == 0) {
+        if (outError) {
+            *outError = [NSError errorWithDomain:@"Grpc"
+                                            code:0
+                                        userInfo:@{NSLocalizedDescriptionKey: @"Channel host not set"}];
+        }
+        return nil;
+    }
+
+    GRPCRequestOptions *requestOptions = [[GRPCRequestOptions alloc] initWithHost:host
                                                                              path:path
                                                                            safety:GRPCCallSafetyDefault];
 
@@ -356,7 +542,7 @@ RCT_EXPORT_METHOD(finishClientStreaming:
         deadlineOverride = (NSNumber *)rawDeadline;
     }
 
-    GRPCCallOptions *callOptions = [self getCallOptionsWithHeaders:headers deadlineSeconds:deadlineOverride];
+    GRPCCallOptions *callOptions = [self getCallOptionsWithHeaders:headers deadlineSeconds:deadlineOverride channelConfig:cfg];
 
     GrpcResponseHandler *handler = [[GrpcResponseHandler alloc] initWithInitialMetadataCallback:^(NSDictionary *initialMetadata) {
                 if (self->hasListeners) {

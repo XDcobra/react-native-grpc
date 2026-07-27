@@ -2,6 +2,8 @@
 
 export const grpcCallListeners: Array<(event: any) => void> = [];
 
+export const mockChannels = new Map<string, Record<string, unknown>>();
+
 export const mockGrpc = {
   getHost: jest.fn(async () => 'host:1'),
   getIsInsecure: jest.fn(async () => true),
@@ -12,6 +14,14 @@ export const mockGrpc = {
   setResponseSizeLimit: jest.fn(),
   setCallDeadlineSeconds: jest.fn(),
   initGrpcChannel: jest.fn(),
+  createChannel: jest.fn(
+    (channelId: string, config: Record<string, unknown>) => {
+      mockChannels.set(channelId, config);
+    }
+  ),
+  closeChannel: jest.fn((channelId: string) => {
+    mockChannels.delete(channelId);
+  }),
   unaryCall: jest.fn(async () => undefined),
   serverStreamingCall: jest.fn(async () => undefined),
   cancelGrpcCall: jest.fn(async () => true),

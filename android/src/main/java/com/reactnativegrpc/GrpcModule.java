@@ -40,36 +40,43 @@ import io.grpc.Status;
 import io.grpc.TlsChannelCredentials;
 
 public class GrpcModule extends ReactContextBaseJavaModule {
+  static final String DEFAULT_CHANNEL_ID = "default";
+
   private final ReactApplicationContext context;
   private final HashMap<Integer, ClientCall> callsMap = new HashMap<>();
+  private final HashMap<String, ChannelState> channels = new HashMap<>();
 
-  private String host;
-  private boolean isInsecure = false;
-  private boolean withCompression = false;
-  private String compressorName = "";
-  private Integer responseSizeLimit = null;
-  private boolean keepAliveEnabled = false;
-  private Integer keepAliveTime;
-  private Integer keepAliveTimeout;
   private boolean isUiLogEnabled = false;
-  /** Per-call deadline in seconds (0 = no deadline). Default 120s. */
-  private long callDeadlineSeconds = 120;
 
-  /** Custom PEM trust roots; null = platform/gRPC defaults. */
-  private String rootCertsPem = null;
-  /** PEM client certificate chain for mTLS. */
-  private String certificateChainPem = null;
-  /** PEM client private key for mTLS. */
-  private String privateKeyPem = null;
-  /** TLS hostname / SNI override (e.g. dial by IP). */
-  private String hostNameOverride = null;
-  /** SHA-256 SPKI pins (base64, without sha256/ prefix). */
-  private List<String> spkiSha256Pins = null;
+  private static final class ChannelState {
+    String host;
+    boolean isInsecure = false;
+    boolean withCompression = false;
+    String compressorName = "";
+    Integer responseSizeLimit = null;
+    boolean keepAliveEnabled = false;
+    Integer keepAliveTime;
+    Integer keepAliveTimeout;
+    /** Per-call deadline in seconds (0 = no deadline). Default 120s. */
+    long callDeadlineSeconds = 120;
 
-  private ManagedChannel managedChannel = null;
+    /** Custom PEM trust roots; null = platform/gRPC defaults. */
+    String rootCertsPem = null;
+    /** PEM client certificate chain for mTLS. */
+    String certificateChainPem = null;
+    /** PEM client private key for mTLS. */
+    String privateKeyPem = null;
+    /** TLS hostname / SNI override (e.g. dial by IP). */
+    String hostNameOverride = null;
+    /** SHA-256 SPKI pins (base64, without sha256/ prefix). */
+    List<String> spkiSha256Pins = null;
+
+    ManagedChannel managedChannel = null;
+  }
 
   public GrpcModule(ReactApplicationContext context) {
     this.context = context;
+    channels.put(DEFAULT_CHANNEL_ID, new ChannelState());
   }
 
   @NonNull
@@ -78,24 +85,42 @@ public class GrpcModule extends ReactContextBaseJavaModule {
     return "Grpc";
   }
 
+  private ChannelState defaultChannel() {
+    ChannelState state = channels.get(DEFAULT_CHANNEL_ID);
+    if (state == null) {
+      state = new ChannelState();
+      channels.put(DEFAULT_CHANNEL_ID, state);
+    }
+    return state;
+  }
+
+  private ChannelState requireChannel(String channelId) throws Exception {
+    String id = channelId == null || channelId.isEmpty() ? DEFAULT_CHANNEL_ID : channelId;
+    ChannelState state = channels.get(id);
+    if (state == null) {
+      throw new Exception("Unknown channel: " + id);
+    }
+    return state;
+  }
+
   @ReactMethod()
   public void getHost(final Promise promise) {
-    promise.resolve(this.host);
+    promise.resolve(defaultChannel().host);
   }
 
   @ReactMethod()
   public void getIsInsecure(final Promise promise) {
-    promise.resolve(this.isInsecure);
+    promise.resolve(defaultChannel().isInsecure);
   }
 
   @ReactMethod
   public void setHost(String host) {
-    this.host = host;
+    defaultChannel().host = host;
   }
 
   @ReactMethod
   public void setInsecure(boolean insecure) {
-    this.isInsecure = insecure;
+    defaultChannel().isInsecure = insecure;
   }
 
   /**
@@ -104,16 +129,17 @@ public class GrpcModule extends ReactContextBaseJavaModule {
    */
   @ReactMethod
   public void setTlsOptions(ReadableMap options) {
-    this.rootCertsPem = readOptionalString(options, "rootCertsPem");
-    this.certificateChainPem = readOptionalString(options, "certificateChainPem");
-    this.privateKeyPem = readOptionalString(options, "privateKeyPem");
-    this.hostNameOverride = readOptionalString(options, "hostNameOverride");
-    this.spkiSha256Pins = SpkiPinTrustManager.normalizePins(
+    ChannelState state = defaultChannel();
+    state.rootCertsPem = readOptionalString(options, "rootCertsPem");
+    state.certificateChainPem = readOptionalString(options, "certificateChainPem");
+    state.privateKeyPem = readOptionalString(options, "privateKeyPem");
+    state.hostNameOverride = readOptionalString(options, "hostNameOverride");
+    state.spkiSha256Pins = SpkiPinTrustManager.normalizePins(
       readOptionalStringList(options, "spkiSha256Pins")
     );
 
-    boolean hasCert = this.certificateChainPem != null && !this.certificateChainPem.isEmpty();
-    boolean hasKey = this.privateKeyPem != null && !this.privateKeyPem.isEmpty();
+    boolean hasCert = state.certificateChainPem != null && !state.certificateChainPem.isEmpty();
+    boolean hasKey = state.privateKeyPem != null && !state.privateKeyPem.isEmpty();
     if (hasCert != hasKey) {
       throw new IllegalArgumentException(
         "mTLS requires both certificateChainPem and privateKeyPem"
@@ -152,33 +178,123 @@ public class GrpcModule extends ReactContextBaseJavaModule {
 
   @ReactMethod
   public void setCompression(Boolean enable, String compressorName) {
-    this.withCompression = enable;
-    this.compressorName = compressorName;
+    ChannelState state = defaultChannel();
+    state.withCompression = enable;
+    state.compressorName = compressorName;
   }
 
   @ReactMethod
   public void setResponseSizeLimit(int limit) {
-    this.responseSizeLimit = limit;
+    defaultChannel().responseSizeLimit = limit;
   }
 
   @ReactMethod
   public void setKeepAlive(boolean enabled, int time, int timeout) {
-    this.keepAliveEnabled = enabled;
-    this.keepAliveTime = time;
-    this.keepAliveTimeout = timeout;
+    ChannelState state = defaultChannel();
+    state.keepAliveEnabled = enabled;
+    state.keepAliveTime = time;
+    state.keepAliveTimeout = timeout;
   }
 
   @ReactMethod
   public void setCallDeadlineSeconds(double seconds) {
-    this.callDeadlineSeconds = Math.max(0, (long) seconds);
+    defaultChannel().callDeadlineSeconds = Math.max(0, (long) seconds);
+  }
+
+  /**
+   * Create (or replace) a named channel from immutable config and open its ManagedChannel.
+   * Does not affect the default channel used by setHost / initGrpcChannel.
+   */
+  @ReactMethod
+  public void createChannel(String channelId, ReadableMap config) {
+    if (channelId == null || channelId.isEmpty()) {
+      throw new IllegalArgumentException("channelId is required");
+    }
+    if (DEFAULT_CHANNEL_ID.equals(channelId)) {
+      throw new IllegalArgumentException("channelId \"default\" is reserved for GrpcClient");
+    }
+    if (config == null || !config.hasKey("host") || config.isNull("host")) {
+      throw new IllegalArgumentException("createChannel requires host");
+    }
+
+    ChannelState existing = channels.get(channelId);
+    if (existing != null && existing.managedChannel != null) {
+      existing.managedChannel.shutdown();
+    }
+
+    ChannelState state = new ChannelState();
+    state.host = config.getString("host");
+    state.isInsecure = config.hasKey("insecure") && !config.isNull("insecure") && config.getBoolean("insecure");
+    state.callDeadlineSeconds = config.hasKey("callDeadlineSeconds") && !config.isNull("callDeadlineSeconds")
+      ? Math.max(0, (long) config.getDouble("callDeadlineSeconds"))
+      : 120;
+    if (config.hasKey("responseSizeLimit") && !config.isNull("responseSizeLimit")) {
+      state.responseSizeLimit = config.getInt("responseSizeLimit");
+    }
+    state.withCompression = config.hasKey("compressionEnable")
+      && !config.isNull("compressionEnable")
+      && config.getBoolean("compressionEnable");
+    state.compressorName = config.hasKey("compressorName") && !config.isNull("compressorName")
+      ? config.getString("compressorName")
+      : "";
+    state.keepAliveEnabled = config.hasKey("keepAliveEnable")
+      && !config.isNull("keepAliveEnable")
+      && config.getBoolean("keepAliveEnable");
+    if (config.hasKey("keepAliveTime") && !config.isNull("keepAliveTime")) {
+      state.keepAliveTime = config.getInt("keepAliveTime");
+    }
+    if (config.hasKey("keepAliveTimeOut") && !config.isNull("keepAliveTimeOut")) {
+      state.keepAliveTimeout = config.getInt("keepAliveTimeOut");
+    }
+
+    if (config.hasKey("tls") && !config.isNull("tls")) {
+      ReadableMap tls = config.getMap("tls");
+      state.rootCertsPem = readOptionalString(tls, "rootCertsPem");
+      state.certificateChainPem = readOptionalString(tls, "certificateChainPem");
+      state.privateKeyPem = readOptionalString(tls, "privateKeyPem");
+      state.hostNameOverride = readOptionalString(tls, "hostNameOverride");
+      state.spkiSha256Pins = SpkiPinTrustManager.normalizePins(
+        readOptionalStringList(tls, "spkiSha256Pins")
+      );
+      boolean hasCert = state.certificateChainPem != null && !state.certificateChainPem.isEmpty();
+      boolean hasKey = state.privateKeyPem != null && !state.privateKeyPem.isEmpty();
+      if (hasCert != hasKey) {
+        throw new IllegalArgumentException(
+          "mTLS requires both certificateChainPem and privateKeyPem"
+        );
+      }
+    }
+
+    state.managedChannel = buildManagedChannel(state);
+    channels.put(channelId, state);
   }
 
   @ReactMethod
-  public void unaryCall(int id, String path, ReadableMap obj, ReadableMap headers, final Promise promise) {
+  public void closeChannel(String channelId) {
+    if (channelId == null || channelId.isEmpty() || DEFAULT_CHANNEL_ID.equals(channelId)) {
+      return;
+    }
+    ChannelState state = channels.remove(channelId);
+    if (state != null && state.managedChannel != null) {
+      state.managedChannel.shutdown();
+      state.managedChannel = null;
+    }
+  }
+
+  @ReactMethod
+  public void unaryCall(
+    int id,
+    String path,
+    ReadableMap obj,
+    ReadableMap headers,
+    String channelId,
+    final Promise promise
+  ) {
     ClientCall call;
 
     try {
-      call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.UNARY, headers, resolveDeadline(obj));
+      ChannelState state = requireChannel(channelId);
+      call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.UNARY, headers, resolveDeadline(obj, state), state);
     } catch (Exception e) {
       promise.reject(e);
 
@@ -197,11 +313,19 @@ public class GrpcModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
-  public void serverStreamingCall(int id, String path, ReadableMap obj, ReadableMap headers, final Promise promise) {
+  public void serverStreamingCall(
+    int id,
+    String path,
+    ReadableMap obj,
+    ReadableMap headers,
+    String channelId,
+    final Promise promise
+  ) {
     ClientCall call;
 
     try {
-      call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.SERVER_STREAMING, headers, resolveDeadline(obj));
+      ChannelState state = requireChannel(channelId);
+      call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.SERVER_STREAMING, headers, resolveDeadline(obj, state), state);
     } catch (Exception e) {
       promise.reject(e);
 
@@ -220,12 +344,20 @@ public class GrpcModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
-  public void clientStreamingCall(int id, String path, ReadableMap obj, ReadableMap headers, final Promise promise) {
+  public void clientStreamingCall(
+    int id,
+    String path,
+    ReadableMap obj,
+    ReadableMap headers,
+    String channelId,
+    final Promise promise
+  ) {
     ClientCall call = callsMap.get(id);
 
     if (call == null) {
       try {
-        call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.CLIENT_STREAMING, headers, resolveDeadline(obj));
+        ChannelState state = requireChannel(channelId);
+        call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.CLIENT_STREAMING, headers, resolveDeadline(obj, state), state);
       } catch (Exception e) {
         promise.reject(e);
 
@@ -244,12 +376,20 @@ public class GrpcModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
-  public void bidiStreamingCall(int id, String path, ReadableMap obj, ReadableMap headers, final Promise promise) {
+  public void bidiStreamingCall(
+    int id,
+    String path,
+    ReadableMap obj,
+    ReadableMap headers,
+    String channelId,
+    final Promise promise
+  ) {
     ClientCall call = callsMap.get(id);
 
     if (call == null) {
       try {
-        call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.BIDI_STREAMING, headers, resolveDeadline(obj));
+        ChannelState state = requireChannel(channelId);
+        call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.BIDI_STREAMING, headers, resolveDeadline(obj, state), state);
       } catch (Exception e) {
         promise.reject(e);
 
@@ -292,12 +432,12 @@ public class GrpcModule extends ReactContextBaseJavaModule {
     }
   }
 
-  /** Resolve per-call deadline: obj.deadlineSeconds if set, else global default. */
-  private long resolveDeadline(ReadableMap obj) {
+  /** Resolve per-call deadline: obj.deadlineSeconds if set, else channel default. */
+  private long resolveDeadline(ReadableMap obj, ChannelState state) {
     if (obj != null && obj.hasKey("deadlineSeconds") && !obj.isNull("deadlineSeconds")) {
       return Math.max(0, (long) obj.getDouble("deadlineSeconds"));
     }
-    return this.callDeadlineSeconds;
+    return state.callDeadlineSeconds;
   }
 
   private ClientCall startGrpcCall(
@@ -305,9 +445,10 @@ public class GrpcModule extends ReactContextBaseJavaModule {
       String path,
       MethodDescriptor.MethodType methodType,
       ReadableMap headers,
-      long deadlineSeconds
+      long deadlineSeconds,
+      ChannelState state
   ) throws Exception {
-    if (this.managedChannel == null) {
+    if (state.managedChannel == null) {
       throw new Exception("Channel not created");
     }
 
@@ -330,14 +471,14 @@ public class GrpcModule extends ReactContextBaseJavaModule {
 
     CallOptions callOptions = CallOptions.DEFAULT;
 
-    if (!this.compressorName.isEmpty()) {
-      callOptions = callOptions.withCompression(this.compressorName);
+    if (!state.compressorName.isEmpty()) {
+      callOptions = callOptions.withCompression(state.compressorName);
     }
     if (deadlineSeconds > 0) {
       callOptions = callOptions.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS);
     }
 
-    ClientCall call = this.managedChannel.newCall(descriptor, callOptions);
+    ClientCall call = state.managedChannel.newCall(descriptor, callOptions);
 
     call.start(new ClientCall.Listener() {
       @Override
@@ -423,7 +564,7 @@ public class GrpcModule extends ReactContextBaseJavaModule {
       }
     }, headersMetadata);
 
-    if (this.withCompression) {
+    if (state.withCompression) {
       call.setMessageCompression(true);
     }
 
@@ -453,22 +594,23 @@ public class GrpcModule extends ReactContextBaseJavaModule {
 
   @ReactMethod
   public void initGrpcChannel() {
-    if (this.managedChannel != null) {
-      this.managedChannel.shutdown();
+    ChannelState state = defaultChannel();
+    if (state.managedChannel != null) {
+      state.managedChannel.shutdown();
     }
-    this.managedChannel = createManagedChannel();
+    state.managedChannel = buildManagedChannel(state);
   }
 
-  private ManagedChannel createManagedChannel() {
+  private ManagedChannel buildManagedChannel(ChannelState state) {
     ManagedChannelBuilder<?> channelBuilder;
 
-    if (this.isInsecure) {
-      channelBuilder = ManagedChannelBuilder.forTarget(this.host).usePlaintext();
+    if (state.isInsecure) {
+      channelBuilder = ManagedChannelBuilder.forTarget(state.host).usePlaintext();
     } else {
-      boolean hasRoots = this.rootCertsPem != null && !this.rootCertsPem.isEmpty();
-      boolean hasCert = this.certificateChainPem != null && !this.certificateChainPem.isEmpty();
-      boolean hasKey = this.privateKeyPem != null && !this.privateKeyPem.isEmpty();
-      boolean hasPins = this.spkiSha256Pins != null && !this.spkiSha256Pins.isEmpty();
+      boolean hasRoots = state.rootCertsPem != null && !state.rootCertsPem.isEmpty();
+      boolean hasCert = state.certificateChainPem != null && !state.certificateChainPem.isEmpty();
+      boolean hasKey = state.privateKeyPem != null && !state.privateKeyPem.isEmpty();
+      boolean hasPins = state.spkiSha256Pins != null && !state.spkiSha256Pins.isEmpty();
 
       if (hasCert != hasKey) {
         throw new IllegalArgumentException(
@@ -481,21 +623,21 @@ public class GrpcModule extends ReactContextBaseJavaModule {
           TlsChannelCredentials.Builder tls = TlsChannelCredentials.newBuilder();
           if (hasRoots || hasPins) {
             X509TrustManager base = hasRoots
-              ? TrustManagers.fromPemRoots(this.rootCertsPem)
+              ? TrustManagers.fromPemRoots(state.rootCertsPem)
               : TrustManagers.systemTrustManager();
             if (hasPins) {
-              tls.trustManager(new SpkiPinTrustManager(base, this.spkiSha256Pins));
+              tls.trustManager(new SpkiPinTrustManager(base, state.spkiSha256Pins));
             } else {
               tls.trustManager(base);
             }
           }
           if (hasCert) {
             tls.keyManager(
-              new ByteArrayInputStream(this.certificateChainPem.getBytes(StandardCharsets.UTF_8)),
-              new ByteArrayInputStream(this.privateKeyPem.getBytes(StandardCharsets.UTF_8))
+              new ByteArrayInputStream(state.certificateChainPem.getBytes(StandardCharsets.UTF_8)),
+              new ByteArrayInputStream(state.privateKeyPem.getBytes(StandardCharsets.UTF_8))
             );
           }
-          channelBuilder = Grpc.newChannelBuilder(this.host, tls.build());
+          channelBuilder = Grpc.newChannelBuilder(state.host, tls.build());
         } catch (IOException e) {
           throw new RuntimeException("Failed to configure TLS credentials", e);
         } catch (RuntimeException e) {
@@ -504,34 +646,34 @@ public class GrpcModule extends ReactContextBaseJavaModule {
           throw new RuntimeException("Failed to configure TLS credentials", e);
         }
       } else {
-        channelBuilder = ManagedChannelBuilder.forTarget(this.host);
+        channelBuilder = ManagedChannelBuilder.forTarget(state.host);
       }
 
-      if (this.hostNameOverride != null && !this.hostNameOverride.isEmpty()) {
-        channelBuilder = channelBuilder.overrideAuthority(this.hostNameOverride);
+      if (state.hostNameOverride != null && !state.hostNameOverride.isEmpty()) {
+        channelBuilder = channelBuilder.overrideAuthority(state.hostNameOverride);
       }
     }
 
-    if (this.responseSizeLimit != null) {
-      channelBuilder = channelBuilder.maxInboundMessageSize(this.responseSizeLimit);
+    if (state.responseSizeLimit != null) {
+      channelBuilder = channelBuilder.maxInboundMessageSize(state.responseSizeLimit);
     }
 
-    if (this.keepAliveEnabled) {
+    if (state.keepAliveEnabled) {
       channelBuilder = channelBuilder
         .keepAliveWithoutCalls(true)
-        .keepAliveTime(keepAliveTime, TimeUnit.SECONDS)
-        .keepAliveTimeout(keepAliveTimeout, TimeUnit.SECONDS);
+        .keepAliveTime(state.keepAliveTime, TimeUnit.SECONDS)
+        .keepAliveTimeout(state.keepAliveTimeout, TimeUnit.SECONDS);
     }
 
-    managedChannel = channelBuilder.build();
-    return managedChannel;
+    return channelBuilder.build();
   }
 
   @ReactMethod
   public void resetConnection(final String message){
-    if(null == managedChannel) return;
+    ChannelState state = defaultChannel();
+    if(null == state.managedChannel) return;
 
-    this.managedChannel.resetConnectBackoff();
+    state.managedChannel.resetConnectBackoff();
 
     this.initGrpcChannel();
 
@@ -540,6 +682,8 @@ public class GrpcModule extends ReactContextBaseJavaModule {
 
   @ReactMethod
   public void onConnectionStateChange(){
+    ChannelState state = defaultChannel();
+    ManagedChannel managedChannel = state.managedChannel;
     if(null == managedChannel) return;
 
     final ConnectivityState connectivityState = managedChannel.getState(true);
@@ -554,7 +698,7 @@ public class GrpcModule extends ReactContextBaseJavaModule {
     } else if(ConnectivityState.SHUTDOWN == connectivityState){
       showToast("onConnectionState SHUTDOWN");
     } else {
-      showToast("onConnectionState UNDEFINED");
+      showToast("onConnectionState UNKNOWN");
     }
     if(ConnectivityState.TRANSIENT_FAILURE == connectivityState && managedChannel.isTerminated() || managedChannel.isShutdown()){
       resetConnection("onConnectionStateChange");
@@ -563,9 +707,10 @@ public class GrpcModule extends ReactContextBaseJavaModule {
 
   @ReactMethod
   public void enterIdle(){
-    if(null == managedChannel) return;
+    ChannelState state = defaultChannel();
+    if(null == state.managedChannel) return;
 
-    managedChannel.enterIdle();
+    state.managedChannel.enterIdle();
 
     showToast("enterIdle");
   }

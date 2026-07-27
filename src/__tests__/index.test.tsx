@@ -30,11 +30,17 @@ jest.mock('react-native', () => {
 });
 
 import { fromByteArray } from 'base64-js';
-import { emitGrpcCall, mockGrpc } from './mockNativeGrpc';
-import { GrpcClient, GrpcError } from '../index';
+import { emitGrpcCall, mockChannels, mockGrpc } from './mockNativeGrpc';
+import {
+  createChannel,
+  DEFAULT_CHANNEL_ID,
+  GrpcClient,
+  GrpcError,
+} from '../index';
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockChannels.clear();
 });
 
 describe('GrpcClient channel config', () => {
@@ -100,6 +106,86 @@ describe('GrpcClient channel config', () => {
   });
 });
 
+describe('createChannel', () => {
+  it('requires a non-empty host', () => {
+    expect(() => createChannel({ host: '' })).toThrow(/non-empty host/);
+    expect(mockGrpc.createChannel).not.toHaveBeenCalled();
+  });
+
+  it('creates concurrent channels and passes channelId on RPCs', async () => {
+    const a = createChannel({
+      host: 'a.example.com:443',
+      insecure: false,
+      callDeadlineSeconds: 30,
+      tls: { hostNameOverride: 'a.example.com' },
+    });
+    const b = createChannel({ host: 'b.example.com:443', insecure: true });
+
+    expect(mockGrpc.createChannel).toHaveBeenCalledTimes(2);
+    const [idA, cfgA] = mockGrpc.createChannel.mock.calls[0] as any;
+    const [idB, cfgB] = mockGrpc.createChannel.mock.calls[1] as any;
+    expect(idA).toMatch(/^ch_/);
+    expect(idB).toMatch(/^ch_/);
+    expect(idA).not.toBe(idB);
+    expect(cfgA.host).toBe('a.example.com:443');
+    expect(cfgA.insecure).toBe(false);
+    expect(cfgA.callDeadlineSeconds).toBe(30);
+    expect(cfgA.tls.hostNameOverride).toBe('a.example.com');
+    expect(cfgB.host).toBe('b.example.com:443');
+    expect(cfgB.insecure).toBe(true);
+    expect(cfgB.tls).toBeNull();
+
+    expect(await a.getHost()).toBe('a.example.com:443');
+    expect(a.getChannelId()).toBe(idA);
+
+    const callA = a.unaryCall('/svc/A', new Uint8Array([1]));
+    const callB = b.unaryCall('/svc/B', new Uint8Array([2]));
+    expect(mockGrpc.unaryCall).toHaveBeenCalledTimes(2);
+    const [, , , , channelIdA] = mockGrpc.unaryCall.mock.calls[0] as any;
+    const [, , , , channelIdB] = mockGrpc.unaryCall.mock.calls[1] as any;
+    expect(channelIdA).toBe(idA);
+    expect(channelIdB).toBe(idB);
+
+    const [callIdA] = mockGrpc.unaryCall.mock.calls[0] as any;
+    const [callIdB] = mockGrpc.unaryCall.mock.calls[1] as any;
+    emitGrpcCall({ id: callIdA, type: 'headers', payload: {} });
+    emitGrpcCall({
+      id: callIdA,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([9])),
+    });
+    emitGrpcCall({ id: callIdA, type: 'trailers', payload: {} });
+    emitGrpcCall({ id: callIdB, type: 'headers', payload: {} });
+    emitGrpcCall({
+      id: callIdB,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([8])),
+    });
+    emitGrpcCall({ id: callIdB, type: 'trailers', payload: {} });
+    await Promise.all([callA, callB]);
+
+    a.close();
+    b.close();
+    expect(mockGrpc.closeChannel).toHaveBeenCalledWith(idA);
+    expect(mockGrpc.closeChannel).toHaveBeenCalledWith(idB);
+    a.close();
+    expect(mockGrpc.closeChannel).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects incomplete mTLS in createChannel tls config', () => {
+    expect(() =>
+      createChannel({
+        host: 'x:443',
+        tls: {
+          certificateChainPem:
+            '-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----',
+        },
+      })
+    ).toThrow(/mTLS requires both/);
+    expect(mockGrpc.createChannel).not.toHaveBeenCalled();
+  });
+});
+
 describe('GrpcClient.unaryCall', () => {
   it('encodes request as base64 and resolves on response+trailers', async () => {
     const req = new Uint8Array([1, 2, 3]);
@@ -110,12 +196,14 @@ describe('GrpcClient.unaryCall', () => {
     });
 
     expect(mockGrpc.unaryCall).toHaveBeenCalledTimes(1);
-    const [id, path, obj, headers] = mockGrpc.unaryCall.mock.calls[0] as any;
+    const [id, path, obj, headers, channelId] = mockGrpc.unaryCall.mock
+      .calls[0] as any;
     expect(typeof id).toBe('number');
     expect(path).toBe('/svc/Method');
     expect(obj.data).toBe(fromByteArray(req));
     expect(obj.deadlineSeconds).toBeUndefined();
     expect(headers).toEqual({ authorization: 'Bearer x' });
+    expect(channelId).toBe(DEFAULT_CHANNEL_ID);
 
     emitGrpcCall({
       id,
@@ -145,8 +233,9 @@ describe('GrpcClient.unaryCall', () => {
       undefined,
       { deadlineSeconds: 45 }
     );
-    const [id, , obj] = mockGrpc.unaryCall.mock.calls[0] as any;
+    const [id, , obj, , channelId] = mockGrpc.unaryCall.mock.calls[0] as any;
     expect(obj.deadlineSeconds).toBe(45);
+    expect(channelId).toBe(DEFAULT_CHANNEL_ID);
 
     emitGrpcCall({ id, type: 'headers', payload: {} });
     emitGrpcCall({
@@ -196,8 +285,10 @@ describe('GrpcClient.serverStreamCall', () => {
       {},
       { deadlineSeconds: 30 }
     );
-    const [id, , obj] = mockGrpc.serverStreamingCall.mock.calls[0] as any;
+    const [id, , obj, , channelId] = mockGrpc.serverStreamingCall.mock
+      .calls[0] as any;
     expect(obj.deadlineSeconds).toBe(30);
+    expect(channelId).toBe(DEFAULT_CHANNEL_ID);
 
     call.responses.on('data', (d) => chunks.push(d));
 
@@ -229,21 +320,23 @@ describe('GrpcClient.clientStreamCall', () => {
 
     await call.requests.send(new Uint8Array([1, 2]));
     expect(mockGrpc.clientStreamingCall).toHaveBeenCalledTimes(1);
-    const [id, path, obj1, headers1] = mockGrpc.clientStreamingCall.mock
-      .calls[0] as any;
+    const [id, path, obj1, headers1, channelId] = mockGrpc.clientStreamingCall
+      .mock.calls[0] as any;
     expect(path).toBe('/svc/ClientStream');
     expect(obj1.data).toBe(fromByteArray(new Uint8Array([1, 2])));
     expect(obj1.deadlineSeconds).toBe(60);
     expect(headers1).toEqual({ authorization: 'Bearer y' });
+    expect(channelId).toBe(DEFAULT_CHANNEL_ID);
 
     await call.requests.send(new Uint8Array([3]));
     expect(mockGrpc.clientStreamingCall).toHaveBeenCalledTimes(2);
-    const [id2, , obj2, headers2] = mockGrpc.clientStreamingCall.mock
-      .calls[1] as any;
+    const [id2, , obj2, headers2, channelId2] = mockGrpc.clientStreamingCall
+      .mock.calls[1] as any;
     expect(id2).toBe(id);
     expect(obj2.data).toBe(fromByteArray(new Uint8Array([3])));
     expect(obj2.deadlineSeconds).toBeUndefined();
     expect(headers2).toEqual({});
+    expect(channelId2).toBe(DEFAULT_CHANNEL_ID);
 
     await call.requests.complete();
     expect(mockGrpc.finishClientStreaming).toHaveBeenCalledWith(id);
@@ -305,12 +398,13 @@ describe('GrpcClient.bidiStreamCall', () => {
 
     await call.requests.send(new Uint8Array([1, 2]));
     expect(mockGrpc.bidiStreamingCall).toHaveBeenCalledTimes(1);
-    const [id, path, obj1, headers1] = mockGrpc.bidiStreamingCall.mock
-      .calls[0] as any;
+    const [id, path, obj1, headers1, channelId] = mockGrpc.bidiStreamingCall
+      .mock.calls[0] as any;
     expect(path).toBe('/svc/Bidi');
     expect(obj1.data).toBe(fromByteArray(new Uint8Array([1, 2])));
     expect(obj1.deadlineSeconds).toBe(45);
     expect(headers1).toEqual({ authorization: 'Bearer z' });
+    expect(channelId).toBe(DEFAULT_CHANNEL_ID);
 
     await call.requests.send(new Uint8Array([3]));
     expect(mockGrpc.bidiStreamingCall).toHaveBeenCalledTimes(2);
