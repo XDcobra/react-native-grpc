@@ -21,6 +21,18 @@ import {
   ServerOutputStream,
 } from './server-streaming';
 import {
+  computeRetryBackoffMs,
+  delay,
+  EffectiveCallPolicy,
+  GrpcHedgingPolicy,
+  GrpcRetryPolicy,
+  normalizeHedgingPolicy,
+  normalizeRetryPolicy,
+  remainingDeadlineSeconds,
+  resolveEffectivePolicy,
+} from './retry';
+import { GrpcStatusCode } from './status';
+import {
   DEFAULT_CHANNEL_ID,
   GrpcCallOptions,
   GrpcMetadata,
@@ -215,35 +227,71 @@ export function normalizeTlsOptions(options: GrpcTlsOptions = {}): {
  */
 export class GrpcCallApi {
   protected channelInterceptors: GrpcInterceptor[];
+  protected channelDeadlineSeconds = 120;
+  protected channelRetry: GrpcRetryPolicy | null = null;
+  protected channelHedging: GrpcHedgingPolicy | null = null;
 
   constructor(
     protected readonly channelId: string,
-    channelInterceptors: readonly GrpcInterceptor[] = []
+    channelInterceptors: readonly GrpcInterceptor[] = [],
+    channelDeadlineSeconds = 120,
+    channelRetry: GrpcRetryPolicy | null = null,
+    channelHedging: GrpcHedgingPolicy | null = null
   ) {
     this.channelInterceptors = [...channelInterceptors];
+    this.channelDeadlineSeconds = channelDeadlineSeconds;
+    this.channelRetry = channelRetry;
+    this.channelHedging = channelHedging;
   }
 
   protected resolveInterceptors(options?: GrpcCallOptions): GrpcInterceptor[] {
     return combineInterceptors(this.channelInterceptors, options?.interceptors);
   }
 
-  unaryCall(
+  protected resolvePolicy(options?: GrpcCallOptions): EffectiveCallPolicy {
+    return resolveEffectivePolicy(
+      this.channelRetry,
+      this.channelHedging,
+      options?.retry,
+      options?.hedging
+    );
+  }
+
+  protected resolveDeadlineBudgetSeconds(
+    options?: GrpcCallOptions
+  ): number | undefined {
+    if (options?.deadlineSeconds !== undefined) {
+      return options.deadlineSeconds;
+    }
+    return this.channelDeadlineSeconds;
+  }
+
+  private async runUnaryAttempt(
     method: string,
     data: Uint8Array,
-    requestHeaders?: GrpcMetadata,
-    options?: GrpcCallOptions
-  ): GrpcUnaryCall {
+    requestHeaders: GrpcMetadata,
+    options: GrpcCallOptions | undefined,
+    interceptors: GrpcInterceptor[],
+    parentSignal: AbortSignal,
+    attemptIds: Set<number>
+  ): Promise<{
+    headers: GrpcMetadata;
+    response: Uint8Array;
+    trailers: GrpcMetadata;
+  }> {
+    if (parentSignal.aborted) {
+      throw new GrpcError('aborted', GrpcStatusCode.CANCELLED);
+    }
+
     const id = getId();
-    const abort = new AbortController();
-    const interceptors = this.resolveInterceptors(options);
+    attemptIds.add(id);
+    const attemptAbort = new AbortController();
+    const onParentAbort = () => attemptAbort.abort();
+    parentSignal.addEventListener('abort', onParentAbort);
 
-    abort.signal.addEventListener('abort', () => {
-      nativeGrpc().cancelGrpcCall(id);
-    });
-
-    const response = createDeferred<Uint8Array>(abort.signal);
-    const headers = createDeferred<GrpcMetadata>(abort.signal);
-    const trailers = createDeferred<GrpcMetadata>(abort.signal);
+    const response = createDeferred<Uint8Array>(attemptAbort.signal);
+    const headers = createDeferred<GrpcMetadata>(attemptAbort.signal);
+    const trailers = createDeferred<GrpcMetadata>(attemptAbort.signal);
 
     deferredMap[id] = {
       response,
@@ -252,6 +300,325 @@ export class GrpcCallApi {
       method,
       interceptors,
     };
+
+    try {
+      let start = await runOnStart(interceptors, {
+        method,
+        headers: { ...requestHeaders },
+        options: { ...(options || {}) },
+        request: data,
+      });
+      const callOptions = { ...start.options };
+      delete callOptions.interceptors;
+      delete callOptions.retry;
+      delete callOptions.hedging;
+      start = {
+        ...start,
+        options: callOptions,
+      };
+      const requestBytes = await runOnSendMessage(
+        interceptors,
+        start.request ?? data,
+        start.method
+      );
+      const obj = buildRequestObject(requestBytes, start.options);
+      await nativeGrpc().unaryCall(
+        id,
+        start.method,
+        obj,
+        start.headers,
+        this.channelId
+      );
+
+      const [hdrs, body, trl] = await Promise.all([
+        headers.promise,
+        response.promise,
+        trailers.promise,
+      ]);
+      return { headers: hdrs, response: body, trailers: trl };
+    } catch (reason) {
+      if (attemptAbort.signal.aborted || parentSignal.aborted) {
+        throw new GrpcError('aborted', GrpcStatusCode.CANCELLED);
+      }
+      throw toGrpcError(reason);
+    } finally {
+      parentSignal.removeEventListener('abort', onParentAbort);
+      attemptIds.delete(id);
+      if (attemptAbort.signal.aborted) {
+        nativeGrpc().cancelGrpcCall(id);
+      }
+    }
+  }
+
+  private async runUnaryWithPolicy(
+    method: string,
+    data: Uint8Array,
+    requestHeaders: GrpcMetadata,
+    options: GrpcCallOptions | undefined,
+    interceptors: GrpcInterceptor[],
+    parentSignal: AbortSignal,
+    policy: EffectiveCallPolicy,
+    deadlineBudgetSeconds: number | undefined
+  ): Promise<{
+    headers: GrpcMetadata;
+    response: Uint8Array;
+    trailers: GrpcMetadata;
+  }> {
+    const startedAt = Date.now();
+    const attemptIds = new Set<number>();
+
+    const withRemainingDeadline = (): GrpcCallOptions => {
+      const next: GrpcCallOptions = { ...(options || {}) };
+      delete next.interceptors;
+      delete next.retry;
+      delete next.hedging;
+      if (policy.kind === 'none') {
+        if (options?.deadlineSeconds === undefined) {
+          delete next.deadlineSeconds;
+        }
+        return next;
+      }
+      const remaining = remainingDeadlineSeconds(
+        deadlineBudgetSeconds,
+        startedAt
+      );
+      if (remaining !== undefined) {
+        next.deadlineSeconds = remaining;
+      }
+      return next;
+    };
+
+    const cancelAllAttempts = () => {
+      for (const id of [...attemptIds]) {
+        nativeGrpc().cancelGrpcCall(id);
+      }
+    };
+    const onAbort = () => cancelAllAttempts();
+    parentSignal.addEventListener('abort', onAbort);
+
+    try {
+      if (policy.kind === 'none') {
+        return await this.runUnaryAttempt(
+          method,
+          data,
+          requestHeaders,
+          withRemainingDeadline(),
+          interceptors,
+          parentSignal,
+          attemptIds
+        );
+      }
+
+      if (policy.kind === 'retry') {
+        let lastError: GrpcError | undefined;
+        for (let attempt = 1; attempt <= policy.policy.maxAttempts; attempt++) {
+          if (parentSignal.aborted) {
+            throw new GrpcError('aborted', GrpcStatusCode.CANCELLED);
+          }
+          const remaining = remainingDeadlineSeconds(
+            deadlineBudgetSeconds,
+            startedAt
+          );
+          if (
+            deadlineBudgetSeconds !== undefined &&
+            deadlineBudgetSeconds > 0 &&
+            remaining !== undefined &&
+            remaining <= 0
+          ) {
+            throw new GrpcError(
+              'DEADLINE_EXCEEDED',
+              GrpcStatusCode.DEADLINE_EXCEEDED
+            );
+          }
+          try {
+            return await this.runUnaryAttempt(
+              method,
+              data,
+              requestHeaders,
+              withRemainingDeadline(),
+              interceptors,
+              parentSignal,
+              attemptIds
+            );
+          } catch (reason) {
+            const error = toGrpcError(reason);
+            lastError = error;
+            if (
+              error.code === GrpcStatusCode.CANCELLED ||
+              parentSignal.aborted
+            ) {
+              throw error;
+            }
+            const retryable =
+              error.code !== undefined &&
+              policy.policy.retryableStatusCodes.has(error.code);
+            if (!retryable || attempt >= policy.policy.maxAttempts) {
+              throw error;
+            }
+            const backoffMs = computeRetryBackoffMs(policy.policy, attempt);
+            await delay(backoffMs, parentSignal as any);
+          }
+        }
+        throw (
+          lastError ?? new GrpcError('UNAVAILABLE', GrpcStatusCode.UNAVAILABLE)
+        );
+      }
+
+      // hedging
+      type AttemptOutcome =
+        | {
+            ok: true;
+            value: {
+              headers: GrpcMetadata;
+              response: Uint8Array;
+              trailers: GrpcMetadata;
+            };
+          }
+        | { ok: false; error: GrpcError };
+
+      return await new Promise((resolve, reject) => {
+        let settled = false;
+        let started = 0;
+        let finished = 0;
+        const timers: ReturnType<typeof setTimeout>[] = [];
+        const inFlight = new Map<number, Promise<AttemptOutcome>>();
+
+        const finishSuccess = (value: {
+          headers: GrpcMetadata;
+          response: Uint8Array;
+          trailers: GrpcMetadata;
+        }) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          timers.forEach(clearTimeout);
+          cancelAllAttempts();
+          resolve(value);
+        };
+
+        const finishError = (error: GrpcError) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          timers.forEach(clearTimeout);
+          cancelAllAttempts();
+          reject(error);
+        };
+
+        const launch = () => {
+          if (settled || parentSignal.aborted) {
+            return;
+          }
+          const remaining = remainingDeadlineSeconds(
+            deadlineBudgetSeconds,
+            startedAt
+          );
+          if (
+            deadlineBudgetSeconds !== undefined &&
+            deadlineBudgetSeconds > 0 &&
+            remaining !== undefined &&
+            remaining <= 0
+          ) {
+            finishError(
+              new GrpcError(
+                'DEADLINE_EXCEEDED',
+                GrpcStatusCode.DEADLINE_EXCEEDED
+              )
+            );
+            return;
+          }
+
+          started += 1;
+          const launchIndex = started;
+          const p = this.runUnaryAttempt(
+            method,
+            data,
+            requestHeaders,
+            withRemainingDeadline(),
+            interceptors,
+            parentSignal,
+            attemptIds
+          )
+            .then(
+              (value): AttemptOutcome => ({ ok: true, value }),
+              (reason): AttemptOutcome => ({
+                ok: false,
+                error: toGrpcError(reason),
+              })
+            )
+            .then((outcome) => {
+              inFlight.delete(launchIndex);
+              finished += 1;
+              if (settled) {
+                return outcome;
+              }
+              if (outcome.ok) {
+                finishSuccess(outcome.value);
+                return outcome;
+              }
+              const { error } = outcome;
+              if (
+                error.code === GrpcStatusCode.CANCELLED ||
+                parentSignal.aborted
+              ) {
+                if (finished >= started && inFlight.size === 0) {
+                  finishError(error);
+                }
+                return outcome;
+              }
+              const nonFatal =
+                error.code !== undefined &&
+                policy.policy.nonFatalStatusCodes.has(error.code);
+              if (!nonFatal) {
+                finishError(error);
+                return outcome;
+              }
+              if (
+                finished >= policy.policy.maxAttempts ||
+                (started >= policy.policy.maxAttempts && inFlight.size === 0)
+              ) {
+                finishError(error);
+              }
+              return outcome;
+            });
+          inFlight.set(launchIndex, p);
+        };
+
+        launch();
+        for (let i = 2; i <= policy.policy.maxAttempts; i++) {
+          const delayMs = policy.policy.hedgingDelayMs * (i - 1);
+          if (delayMs <= 0) {
+            launch();
+          } else {
+            timers.push(setTimeout(launch, delayMs));
+          }
+        }
+
+        parentSignal.addEventListener('abort', () => {
+          finishError(new GrpcError('aborted', GrpcStatusCode.CANCELLED));
+        });
+      });
+    } finally {
+      parentSignal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  unaryCall(
+    method: string,
+    data: Uint8Array,
+    requestHeaders?: GrpcMetadata,
+    options?: GrpcCallOptions
+  ): GrpcUnaryCall {
+    const abort = new AbortController();
+    const interceptors = this.resolveInterceptors(options);
+    const policy = this.resolvePolicy(options);
+    const deadlineBudgetSeconds = this.resolveDeadlineBudgetSeconds(options);
+
+    const response = createDeferred<Uint8Array>(abort.signal);
+    const headers = createDeferred<GrpcMetadata>(abort.signal);
+    const trailers = createDeferred<GrpcMetadata>(abort.signal);
 
     const call = new GrpcUnaryCall(
       method,
@@ -270,40 +637,32 @@ export class GrpcCallApi {
 
     Promise.resolve()
       .then(async () => {
-        let start = await runOnStart(interceptors, {
+        const result = await this.runUnaryWithPolicy(
           method,
-          headers: { ...(requestHeaders || {}) },
-          options: { ...(options || {}) },
-          request: data,
-        });
-        const callOptions = { ...start.options };
-        delete callOptions.interceptors;
-        start = {
-          ...start,
-          options: callOptions,
-        };
-        const requestBytes = await runOnSendMessage(
+          data,
+          requestHeaders || {},
+          options,
           interceptors,
-          start.request ?? data,
-          start.method
+          abort.signal,
+          policy,
+          deadlineBudgetSeconds
         );
-        const obj = buildRequestObject(requestBytes, start.options);
-        await nativeGrpc().unaryCall(
-          id,
-          start.method,
-          obj,
-          start.headers,
-          this.channelId
-        );
+        headers.resolve(result.headers);
+        response.resolve(result.response);
+        trailers.resolve(result.trailers);
       })
       .catch((reason) => {
-        const deferred = deferredMap[id];
-        if (!deferred) {
+        if (abort.signal.aborted) {
+          const error = new GrpcError('aborted', GrpcStatusCode.CANCELLED);
+          headers.reject(error);
+          response.reject(error);
+          trailers.reject(error);
           return;
         }
         const error = runOnError(interceptors, toGrpcError(reason), method);
-        rejectDeferredCall(deferred, error);
-        delete deferredMap[id];
+        headers.reject(error);
+        response.reject(error);
+        trailers.reject(error);
       });
 
     return call;
@@ -580,7 +939,7 @@ export class GrpcCallApi {
 
 export class GrpcClient extends GrpcCallApi {
   constructor() {
-    super(DEFAULT_CHANNEL_ID, []);
+    super(DEFAULT_CHANNEL_ID, [], 120, null, null);
     Emitter.addListener('grpc-call', handleGrpcEvent);
   }
   destroy() {
@@ -592,6 +951,28 @@ export class GrpcClient extends GrpcCallApi {
    */
   setInterceptors(interceptors: GrpcInterceptor[] = []): void {
     this.channelInterceptors = [...interceptors];
+  }
+  /**
+   * Replace unary retry policy on the default channel.
+   * Clears any hedging policy (mutually exclusive). Pass `null` to disable.
+   */
+  setRetryPolicy(policy: GrpcRetryPolicy | null): void {
+    if (policy) {
+      normalizeRetryPolicy(policy);
+    }
+    this.channelRetry = policy;
+    this.channelHedging = null;
+  }
+  /**
+   * Replace unary hedging policy on the default channel.
+   * Clears any retry policy (mutually exclusive). Pass `null` to disable.
+   */
+  setHedgingPolicy(policy: GrpcHedgingPolicy | null): void {
+    if (policy) {
+      normalizeHedgingPolicy(policy);
+    }
+    this.channelHedging = policy;
+    this.channelRetry = null;
   }
   getHost(): Promise<string> {
     return nativeGrpc().getHost();
@@ -622,6 +1003,7 @@ export class GrpcClient extends GrpcCallApi {
   }
   /** Global per-call deadline in seconds (Android/iOS). Default 120. Overridable per RPC via options. */
   setCallDeadlineSeconds(seconds: number): void {
+    this.channelDeadlineSeconds = Math.max(0, seconds);
     nativeGrpc().setCallDeadlineSeconds(seconds);
   }
 

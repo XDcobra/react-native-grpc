@@ -1,6 +1,11 @@
 import { GrpcCallApi, normalizeTlsOptions } from './client';
 import type { GrpcInterceptor } from './interceptors';
 import { nativeGrpc } from './native';
+import {
+  assertExclusivePolicies,
+  normalizeHedgingPolicy,
+  normalizeRetryPolicy,
+} from './retry';
 import { GrpcChannelConfig } from './types';
 
 let channelCtr = 1;
@@ -15,9 +20,18 @@ export class GrpcChannel extends GrpcCallApi {
   constructor(
     channelId: string,
     private readonly host: string,
-    interceptors: readonly GrpcInterceptor[] = []
+    interceptors: readonly GrpcInterceptor[] = [],
+    channelDeadlineSeconds = 120,
+    channelRetry: import('./retry').GrpcRetryPolicy | null = null,
+    channelHedging: import('./retry').GrpcHedgingPolicy | null = null
   ) {
-    super(channelId, interceptors);
+    super(
+      channelId,
+      interceptors,
+      channelDeadlineSeconds,
+      channelRetry,
+      channelHedging
+    );
   }
 
   /** Host this channel was created with. */
@@ -52,19 +66,30 @@ export function createChannel(config: GrpcChannelConfig): GrpcChannel {
     throw new Error('createChannel requires a non-empty host');
   }
 
+  assertExclusivePolicies(config.retry, config.hedging);
+  if (config.retry) {
+    normalizeRetryPolicy(config.retry);
+  }
+  if (config.hedging) {
+    normalizeHedgingPolicy(config.hedging);
+  }
+  const retry = config.retry ?? null;
+  const hedging = config.hedging ?? null;
+
   const tls = config.tls ? normalizeTlsOptions(config.tls) : null;
   const channelId = `ch_${channelCtr++}`;
   const compression = config.compression;
   const keepAlive = config.keepAlive;
+  const deadline =
+    config.callDeadlineSeconds !== undefined
+      ? Math.max(0, config.callDeadlineSeconds)
+      : 120;
 
   nativeGrpc().createChannel(channelId, {
     host: config.host.trim(),
     insecure: !!config.insecure,
     tls,
-    callDeadlineSeconds:
-      config.callDeadlineSeconds !== undefined
-        ? Math.max(0, config.callDeadlineSeconds)
-        : 120,
+    callDeadlineSeconds: deadline,
     responseSizeLimit:
       config.responseSizeLimit !== undefined ? config.responseSizeLimit : null,
     compressionEnable: !!compression?.enable,
@@ -77,6 +102,9 @@ export function createChannel(config: GrpcChannelConfig): GrpcChannel {
   return new GrpcChannel(
     channelId,
     config.host.trim(),
-    config.interceptors ?? []
+    config.interceptors ?? [],
+    deadline,
+    retry,
+    hedging
   );
 }
