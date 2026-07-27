@@ -48,7 +48,6 @@
     "build": "bob build",
     "prepare": "bob build",
     "release": "release-it",
-    "release:first": "release-it --no-increment",
     "example": "yarn --cwd example",
     "pods": "cd example && pod-install --quiet",
     "bootstrap": "yarn example && yarn && yarn pods"
