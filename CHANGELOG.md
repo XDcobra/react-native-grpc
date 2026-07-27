@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Multiple concurrent channels via `createChannel` / `GrpcChannel` (immutable per-channel host, TLS, deadline, keepalive, compression)
+
 ## [1.0.0] - 2026-07-27
 
 First public release of `@xdcobra/react-native-grpc` (fork of
