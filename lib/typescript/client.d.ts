@@ -1,12 +1,12 @@
 import { GrpcServerStreamingCall } from './server-streaming';
 import { GrpcCallOptions, GrpcMetadata } from './types';
 import { GrpcUnaryCall } from './unary';
-declare type GrpcRequestObject = {
+type GrpcRequestObject = {
     data: string;
     /** Optional per-call override; native falls back to global default when omitted. */
     deadlineSeconds?: number;
 };
-declare type GrpcType = {
+type GrpcType = {
     getHost: () => Promise<string>;
     getIsInsecure: () => Promise<boolean>;
     setHost(host: string): void;
