@@ -12,6 +12,7 @@ import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
+import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
@@ -19,9 +20,13 @@ import com.facebook.react.modules.core.DeviceEventManagerModule;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import javax.net.ssl.X509TrustManager;
 
 import io.grpc.CallOptions;
 import io.grpc.ClientCall;
@@ -58,6 +63,8 @@ public class GrpcModule extends ReactContextBaseJavaModule {
   private String privateKeyPem = null;
   /** TLS hostname / SNI override (e.g. dial by IP). */
   private String hostNameOverride = null;
+  /** SHA-256 SPKI pins (base64, without sha256/ prefix). */
+  private List<String> spkiSha256Pins = null;
 
   private ManagedChannel managedChannel = null;
 
@@ -101,6 +108,9 @@ public class GrpcModule extends ReactContextBaseJavaModule {
     this.certificateChainPem = readOptionalString(options, "certificateChainPem");
     this.privateKeyPem = readOptionalString(options, "privateKeyPem");
     this.hostNameOverride = readOptionalString(options, "hostNameOverride");
+    this.spkiSha256Pins = SpkiPinTrustManager.normalizePins(
+      readOptionalStringList(options, "spkiSha256Pins")
+    );
 
     boolean hasCert = this.certificateChainPem != null && !this.certificateChainPem.isEmpty();
     boolean hasKey = this.privateKeyPem != null && !this.privateKeyPem.isEmpty();
@@ -120,6 +130,24 @@ public class GrpcModule extends ReactContextBaseJavaModule {
       return null;
     }
     return value;
+  }
+
+  private static List<String> readOptionalStringList(ReadableMap options, String key) {
+    if (options == null || !options.hasKey(key) || options.isNull(key)) {
+      return null;
+    }
+    ReadableArray array = options.getArray(key);
+    if (array == null || array.size() == 0) {
+      return null;
+    }
+    List<String> values = new ArrayList<>();
+    for (int i = 0; i < array.size(); i++) {
+      String value = array.getString(i);
+      if (value != null && !value.isEmpty()) {
+        values.add(value);
+      }
+    }
+    return values.isEmpty() ? null : values;
   }
 
   @ReactMethod
@@ -440,6 +468,7 @@ public class GrpcModule extends ReactContextBaseJavaModule {
       boolean hasRoots = this.rootCertsPem != null && !this.rootCertsPem.isEmpty();
       boolean hasCert = this.certificateChainPem != null && !this.certificateChainPem.isEmpty();
       boolean hasKey = this.privateKeyPem != null && !this.privateKeyPem.isEmpty();
+      boolean hasPins = this.spkiSha256Pins != null && !this.spkiSha256Pins.isEmpty();
 
       if (hasCert != hasKey) {
         throw new IllegalArgumentException(
@@ -447,13 +476,18 @@ public class GrpcModule extends ReactContextBaseJavaModule {
         );
       }
 
-      if (hasRoots || hasCert) {
+      if (hasRoots || hasCert || hasPins) {
         try {
           TlsChannelCredentials.Builder tls = TlsChannelCredentials.newBuilder();
-          if (hasRoots) {
-            tls.trustManager(
-              new ByteArrayInputStream(this.rootCertsPem.getBytes(StandardCharsets.UTF_8))
-            );
+          if (hasRoots || hasPins) {
+            X509TrustManager base = hasRoots
+              ? TrustManagers.fromPemRoots(this.rootCertsPem)
+              : TrustManagers.systemTrustManager();
+            if (hasPins) {
+              tls.trustManager(new SpkiPinTrustManager(base, this.spkiSha256Pins));
+            } else {
+              tls.trustManager(base);
+            }
           }
           if (hasCert) {
             tls.keyManager(
@@ -463,6 +497,10 @@ public class GrpcModule extends ReactContextBaseJavaModule {
           }
           channelBuilder = Grpc.newChannelBuilder(this.host, tls.build());
         } catch (IOException e) {
+          throw new RuntimeException("Failed to configure TLS credentials", e);
+        } catch (RuntimeException e) {
+          throw e;
+        } catch (Exception e) {
           throw new RuntimeException("Failed to configure TLS credentials", e);
         }
       } else {

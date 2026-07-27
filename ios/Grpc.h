@@ -16,5 +16,7 @@
 @property (nonatomic, copy) NSString* grpcPrivateKeyPem;
 /** TLS hostname override (SNI / cert verification). */
 @property (nonatomic, copy) NSString* grpcHostNameOverride;
+/** SHA-256 SPKI pins (base64, no sha256/ prefix). */
+@property (nonatomic, copy) NSArray<NSString *>* grpcSpkiSha256Pins;
 
 @end

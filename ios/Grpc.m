@@ -1,4 +1,5 @@
 #import "Grpc.h"
+#import "SpkiPinning.h"
 #import <GRPCClient/GRPCCall.h>
 #import <GRPCClient/GRPCTransport.h>
 
@@ -175,6 +176,7 @@ RCT_EXPORT_METHOD(setTlsOptions:
     NSString *certChain = [self tlsStringFromOptions:options key:@"certificateChainPem"];
     NSString *privateKey = [self tlsStringFromOptions:options key:@"privateKeyPem"];
     NSString *hostOverride = [self tlsStringFromOptions:options key:@"hostNameOverride"];
+    NSArray<NSString *> *pins = SpkiNormalizePins(options[@"spkiSha256Pins"]);
 
     BOOL hasCert = certChain.length > 0;
     BOOL hasKey = privateKey.length > 0;
@@ -184,10 +186,26 @@ RCT_EXPORT_METHOD(setTlsOptions:
                                      userInfo:nil];
     }
 
+    if (pins.count > 0) {
+        // gRPC ObjC has no handshake SPKI hook; pin by trusting only matching PEM certs.
+        if (rootCerts.length == 0) {
+            @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                           reason:@"spkiSha256Pins on iOS requires rootCertsPem (include the pinned leaf or intermediate PEM)"
+                                         userInfo:nil];
+        }
+        NSError *pinError = nil;
+        if (!SpkiPemCertificatesMatchPins(rootCerts, pins, &pinError)) {
+            @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                           reason:pinError.localizedDescription ?: @"SPKI pin mismatch for rootCertsPem"
+                                         userInfo:nil];
+        }
+    }
+
     self.grpcRootCertsPem = rootCerts;
     self.grpcCertificateChainPem = certChain;
     self.grpcPrivateKeyPem = privateKey;
     self.grpcHostNameOverride = hostOverride;
+    self.grpcSpkiSha256Pins = pins;
 }
 
 - (NSString *)tlsStringFromOptions:(NSDictionary *)options key:(NSString *)key {
