@@ -14,6 +14,7 @@ export type GrpcCallOptions = {
  * Channel TLS configuration. Each `setTlsOptions` call **replaces** the prior
  * config (omitted / null / undefined fields are cleared). Call before
  * `initGrpcChannel()`. Ignored while `setInsecure(true)`.
+ * Prefer binding TLS at `createChannel({ tls })` for multi-host apps.
  */
 export type GrpcTlsOptions = {
   /** PEM trust roots (one or more certs). Clears → platform/gRPC defaults. */
@@ -33,6 +34,34 @@ export type GrpcTlsOptions = {
    */
   spkiSha256Pins?: string[] | null;
 };
+
+/** Immutable config for {@link createChannel}. Reconfigure by creating a new channel. */
+export type GrpcChannelConfig = {
+  /** Target host, e.g. `api.example.com:443` or `10.0.2.2:50051`. */
+  host: string;
+  /** Plaintext (dev). Default `false`. */
+  insecure?: boolean;
+  /** TLS options (ignored when `insecure` is true). */
+  tls?: GrpcTlsOptions;
+  /** Default per-call deadline in seconds. Default 120. */
+  callDeadlineSeconds?: number;
+  /** Max inbound message size in bytes (Android / iOS). */
+  responseSizeLimit?: number;
+  /** Message compression. */
+  compression?: {
+    enable: boolean;
+    compressorName: string;
+  };
+  /** HTTP/2 keepalive (Android primarily). */
+  keepAlive?: {
+    enable: boolean;
+    keepAliveTime: number;
+    keepAliveTimeOut: number;
+  };
+};
+
+/** Id of the singleton / legacy channel used by `GrpcClient` setters. */
+export const DEFAULT_CHANNEL_ID = 'default';
 
 export type RemoveListener = () => void;
 

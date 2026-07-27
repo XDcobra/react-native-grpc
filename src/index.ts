@@ -8,4 +8,5 @@ export * from './server-streaming';
 export * from './client-streaming';
 export * from './bidi-streaming';
 export * from './errors';
+export { createChannel, GrpcChannel } from './channel';
 export { GrpcClient };
