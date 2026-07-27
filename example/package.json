@@ -7,11 +7,10 @@
     "android": "react-native run-android",
     "ios": "react-native run-ios",
     "start": "react-native start",
-    "build:proto": "./protogen.sh"
+    "build:proto": "buf generate"
   },
   "dependencies": {
-    "@protobuf-ts/runtime": "^2.8.2",
-    "@protobuf-ts/runtime-rpc": "^2.8.2",
+    "@bufbuild/protobuf": "^2.13.0",
     "react": "18.2.0",
     "react-native": "0.70.6",
     "text-encoding": "^0.7.0"
@@ -19,7 +18,8 @@
   "devDependencies": {
     "@babel/core": "^7.20.5",
     "@babel/runtime": "^7.20.6",
-    "@protobuf-ts/plugin": "^2.8.2",
+    "@bufbuild/buf": "^1.72.0",
+    "@bufbuild/protoc-gen-es": "^2.13.0",
     "babel-plugin-module-resolver": "^4.1.0",
     "metro": "^0.73.4",
     "metro-react-native-babel-preset": "^0.73.4"
