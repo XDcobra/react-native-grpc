@@ -16,6 +16,9 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -23,11 +26,13 @@ import java.util.concurrent.TimeUnit;
 import io.grpc.CallOptions;
 import io.grpc.ClientCall;
 import io.grpc.ConnectivityState;
+import io.grpc.Grpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.Status;
+import io.grpc.TlsChannelCredentials;
 
 public class GrpcModule extends ReactContextBaseJavaModule {
   private final ReactApplicationContext context;
@@ -44,6 +49,15 @@ public class GrpcModule extends ReactContextBaseJavaModule {
   private boolean isUiLogEnabled = false;
   /** Per-call deadline in seconds (0 = no deadline). Default 120s. */
   private long callDeadlineSeconds = 120;
+
+  /** Custom PEM trust roots; null = platform/gRPC defaults. */
+  private String rootCertsPem = null;
+  /** PEM client certificate chain for mTLS. */
+  private String certificateChainPem = null;
+  /** PEM client private key for mTLS. */
+  private String privateKeyPem = null;
+  /** TLS hostname / SNI override (e.g. dial by IP). */
+  private String hostNameOverride = null;
 
   private ManagedChannel managedChannel = null;
 
@@ -75,6 +89,37 @@ public class GrpcModule extends ReactContextBaseJavaModule {
   @ReactMethod
   public void setInsecure(boolean insecure) {
     this.isInsecure = insecure;
+  }
+
+  /**
+   * Replace TLS configuration (custom CA / mTLS / hostname override).
+   * Omitted or null fields clear the previous value. Apply before initGrpcChannel().
+   */
+  @ReactMethod
+  public void setTlsOptions(ReadableMap options) {
+    this.rootCertsPem = readOptionalString(options, "rootCertsPem");
+    this.certificateChainPem = readOptionalString(options, "certificateChainPem");
+    this.privateKeyPem = readOptionalString(options, "privateKeyPem");
+    this.hostNameOverride = readOptionalString(options, "hostNameOverride");
+
+    boolean hasCert = this.certificateChainPem != null && !this.certificateChainPem.isEmpty();
+    boolean hasKey = this.privateKeyPem != null && !this.privateKeyPem.isEmpty();
+    if (hasCert != hasKey) {
+      throw new IllegalArgumentException(
+        "mTLS requires both certificateChainPem and privateKeyPem"
+      );
+    }
+  }
+
+  private static String readOptionalString(ReadableMap options, String key) {
+    if (options == null || !options.hasKey(key) || options.isNull(key)) {
+      return null;
+    }
+    String value = options.getString(key);
+    if (value == null || value.isEmpty()) {
+      return null;
+    }
+    return value;
   }
 
   @ReactMethod
@@ -387,14 +432,50 @@ public class GrpcModule extends ReactContextBaseJavaModule {
   }
 
   private ManagedChannel createManagedChannel() {
-    ManagedChannelBuilder channelBuilder = ManagedChannelBuilder.forTarget(this.host);
+    ManagedChannelBuilder<?> channelBuilder;
+
+    if (this.isInsecure) {
+      channelBuilder = ManagedChannelBuilder.forTarget(this.host).usePlaintext();
+    } else {
+      boolean hasRoots = this.rootCertsPem != null && !this.rootCertsPem.isEmpty();
+      boolean hasCert = this.certificateChainPem != null && !this.certificateChainPem.isEmpty();
+      boolean hasKey = this.privateKeyPem != null && !this.privateKeyPem.isEmpty();
+
+      if (hasCert != hasKey) {
+        throw new IllegalArgumentException(
+          "mTLS requires both certificateChainPem and privateKeyPem"
+        );
+      }
+
+      if (hasRoots || hasCert) {
+        try {
+          TlsChannelCredentials.Builder tls = TlsChannelCredentials.newBuilder();
+          if (hasRoots) {
+            tls.trustManager(
+              new ByteArrayInputStream(this.rootCertsPem.getBytes(StandardCharsets.UTF_8))
+            );
+          }
+          if (hasCert) {
+            tls.keyManager(
+              new ByteArrayInputStream(this.certificateChainPem.getBytes(StandardCharsets.UTF_8)),
+              new ByteArrayInputStream(this.privateKeyPem.getBytes(StandardCharsets.UTF_8))
+            );
+          }
+          channelBuilder = Grpc.newChannelBuilder(this.host, tls.build());
+        } catch (IOException e) {
+          throw new RuntimeException("Failed to configure TLS credentials", e);
+        }
+      } else {
+        channelBuilder = ManagedChannelBuilder.forTarget(this.host);
+      }
+
+      if (this.hostNameOverride != null && !this.hostNameOverride.isEmpty()) {
+        channelBuilder = channelBuilder.overrideAuthority(this.hostNameOverride);
+      }
+    }
 
     if (this.responseSizeLimit != null) {
       channelBuilder = channelBuilder.maxInboundMessageSize(this.responseSizeLimit);
-    }
-
-    if (this.isInsecure) {
-      channelBuilder = channelBuilder.usePlaintext();
     }
 
     if (this.keepAliveEnabled) {

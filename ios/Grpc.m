@@ -115,6 +115,21 @@
     options.initialMetadata = headers;
     options.transport = self.grpcInsecure ? GRPCDefaultTransportImplList.core_insecure : GRPCDefaultTransportImplList.core_secure;
 
+    if (!self.grpcInsecure) {
+        if (self.grpcRootCertsPem.length > 0) {
+            options.PEMRootCertificates = self.grpcRootCertsPem;
+        }
+        if (self.grpcCertificateChainPem.length > 0) {
+            options.PEMCertificateChain = self.grpcCertificateChainPem;
+        }
+        if (self.grpcPrivateKeyPem.length > 0) {
+            options.PEMPrivateKey = self.grpcPrivateKeyPem;
+        }
+        if (self.grpcHostNameOverride.length > 0) {
+            options.hostNameOverride = self.grpcHostNameOverride;
+        }
+    }
+
     if (self.grpcResponseSizeLimit != nil) {
         options.responseSizeLimit = self.grpcResponseSizeLimit.unsignedLongValue;
     }
@@ -152,6 +167,39 @@ RCT_EXPORT_METHOD(setHost:
 RCT_EXPORT_METHOD(setInsecure:
     (nonnull NSNumber*) insecure) {
     self.grpcInsecure = [insecure boolValue];
+}
+
+RCT_EXPORT_METHOD(setTlsOptions:
+    (NSDictionary *) options) {
+    NSString *rootCerts = [self tlsStringFromOptions:options key:@"rootCertsPem"];
+    NSString *certChain = [self tlsStringFromOptions:options key:@"certificateChainPem"];
+    NSString *privateKey = [self tlsStringFromOptions:options key:@"privateKeyPem"];
+    NSString *hostOverride = [self tlsStringFromOptions:options key:@"hostNameOverride"];
+
+    BOOL hasCert = certChain.length > 0;
+    BOOL hasKey = privateKey.length > 0;
+    if (hasCert != hasKey) {
+        @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                       reason:@"mTLS requires both certificateChainPem and privateKeyPem"
+                                     userInfo:nil];
+    }
+
+    self.grpcRootCertsPem = rootCerts;
+    self.grpcCertificateChainPem = certChain;
+    self.grpcPrivateKeyPem = privateKey;
+    self.grpcHostNameOverride = hostOverride;
+}
+
+- (NSString *)tlsStringFromOptions:(NSDictionary *)options key:(NSString *)key {
+    id value = options[key];
+    if (value == nil || value == [NSNull null]) {
+        return nil;
+    }
+    if (![value isKindOfClass:[NSString class]]) {
+        return nil;
+    }
+    NSString *string = (NSString *)value;
+    return string.length > 0 ? string : nil;
 }
 
 RCT_EXPORT_METHOD(setResponseSizeLimit:
