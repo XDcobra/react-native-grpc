@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Multiple concurrent channels via `createChannel` / `GrpcChannel` (immutable per-channel host, TLS, deadline, keepalive, compression)
+- Interceptors via `createChannel({ interceptors })` / `GrpcClient.setInterceptors` and per-RPC `options.interceptors` (onion chain: onStart, onSendMessage, onHeaders, onMessage, onTrailers, onError)
 
 ## [1.0.0] - 2026-07-27
 

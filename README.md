@@ -13,6 +13,7 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 - Bidirectional streaming via `GrpcClient.bidiStreamCall`
 - TLS options via `GrpcClient.setTlsOptions` (custom CA, mTLS, hostname override, SPKI pins)
 - Multiple concurrent channels via `createChannel` / `GrpcChannel` (immutable per-channel config)
+- Interceptors via `createChannel({ interceptors })` / `GrpcClient.setInterceptors` (auth, logging, remapping)
 
 ## Installation
 
@@ -113,6 +114,48 @@ staging.close();
 
 `tls` uses the same `GrpcTlsOptions` fields as `GrpcClient.setTlsOptions` (see TLS matrix below). `close()` does not affect the singleton default channel.
 
+### Interceptors
+
+`createChannel` accepts the same interceptor hooks as `GrpcClient.setInterceptors` (replace semantics on the singleton). Outbound hooks run index 0→n; inbound hooks run n→0 (onion). Throw from `onStart` to abort before the native call. Per-RPC extras: `options.interceptors` (appended after channel interceptors).
+
+```ts
+import { createChannel, GrpcClient, GrpcInterceptor } from '@xdcobra/react-native-grpc';
+
+const auth: GrpcInterceptor = {
+  onStart(start) {
+    return {
+      ...start,
+      headers: {
+        ...start.headers,
+        authorization: 'Bearer <token>',
+      },
+    };
+  },
+};
+
+// Multi-host / preferred
+const channel = createChannel({
+  host: 'api.example.com:443',
+  interceptors: [auth],
+});
+
+// Singleton
+GrpcClient.setInterceptors([auth]);
+
+await channel.unaryCall('/package.Service/Method', requestBytes, {}, {
+  interceptors: [
+    {
+      onError(error) {
+        // remap or log
+        return error;
+      },
+    },
+  ],
+});
+```
+
+Hooks: `onStart`, `onSendMessage`, `onHeaders`, `onMessage`, `onTrailers`, `onError`.
+
 Unary, server streaming, client streaming, and bidirectional streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
 
 ### TLS matrix
@@ -143,7 +186,6 @@ openssl x509 -in leaf.pem -pubkey -noout \
 
 Gaps vs a full gRPC client (not yet supported or not exposed):
 
-- **Interceptors**: no request/response middleware
 - **Retry / hedging**: no client-side retry policy
 - **Cross-platform connection events**: Android-only (`onConnectionStateChange`, `enterIdle`, …)
 - **Codegen / stubs**: raw method paths + bytes; no generated service clients
