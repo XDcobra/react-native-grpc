@@ -1,4 +1,5 @@
 import type { GrpcInterceptor } from './interceptors';
+import type { GrpcHedgingPolicy, GrpcRetryPolicy } from './retry';
 
 export type GrpcMetadata = Record<string, string>;
 
@@ -15,6 +16,16 @@ export type GrpcCallOptions = {
    * Prefer channel-level `interceptors` / `setInterceptors` for shared middleware.
    */
   interceptors?: GrpcInterceptor[];
+  /**
+   * Unary-only retry policy override, or `false` to disable channel retry for this call.
+   * Mutually exclusive with `hedging`.
+   */
+  retry?: GrpcRetryPolicy | false;
+  /**
+   * Unary-only hedging policy override, or `false` to disable channel hedging for this call.
+   * Mutually exclusive with `retry`.
+   */
+  hedging?: GrpcHedgingPolicy | false;
 };
 
 /**
@@ -70,12 +81,22 @@ export type GrpcChannelConfig = {
    * Per-RPC extras: `GrpcCallOptions.interceptors`.
    */
   interceptors?: GrpcInterceptor[];
+  /**
+   * Unary-only retry policy (A6-style). Mutually exclusive with `hedging`.
+   */
+  retry?: GrpcRetryPolicy;
+  /**
+   * Unary-only hedging policy (A6-style). Mutually exclusive with `retry`.
+   */
+  hedging?: GrpcHedgingPolicy;
 };
 
 /** Id of the singleton / legacy channel used by `GrpcClient` setters. */
 export const DEFAULT_CHANNEL_ID = 'default';
 
 export type { GrpcInterceptStart, GrpcInterceptor } from './interceptors';
+export type { GrpcHedgingPolicy, GrpcRetryPolicy } from './retry';
+export { GrpcStatusCode } from './status';
 
 export type RemoveListener = () => void;
 

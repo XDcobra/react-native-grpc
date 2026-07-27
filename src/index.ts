@@ -10,4 +10,6 @@ export * from './bidi-streaming';
 export * from './errors';
 export { createChannel, GrpcChannel } from './channel';
 export type { GrpcInterceptStart, GrpcInterceptor } from './interceptors';
+export type { GrpcHedgingPolicy, GrpcRetryPolicy } from './retry';
+export { GrpcStatusCode } from './status';
 export { GrpcClient };
