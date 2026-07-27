@@ -239,6 +239,28 @@ RCT_EXPORT_METHOD(clientStreamingCall:
     resolve([NSNull null]);
 }
 
+RCT_EXPORT_METHOD(bidiStreamingCall:
+    (nonnull NSNumber*)callId
+        path:(NSString*)path
+        obj:(NSDictionary*)obj
+        headers:(NSDictionary*)headers
+        resolver:(RCTPromiseResolveBlock)resolve
+        rejecter:(RCTPromiseRejectBlock)reject) {
+    NSData *requestData = [[NSData alloc] initWithBase64EncodedString:[obj valueForKey:@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
+
+    GRPCCall2 *call = [calls objectForKey:callId];
+
+    if (call == nil) {
+        call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj];
+
+        [calls setObject:call forKey:callId];
+    }
+
+    [call writeData:requestData];
+
+    resolve([NSNull null]);
+}
+
 RCT_EXPORT_METHOD(finishClientStreaming:
     (nonnull NSNumber*)callId
         resolver:(RCTPromiseResolveBlock)resolve

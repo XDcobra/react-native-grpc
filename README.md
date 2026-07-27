@@ -11,6 +11,7 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 - Builds and runs with React Native New Architecture (Native Module interop)
 - Per-call deadline via `setCallDeadlineSeconds` (default 120s) and per-RPC `options.deadlineSeconds`
 - Client streaming via `GrpcClient.clientStreamCall`
+- Bidirectional streaming via `GrpcClient.bidiStreamCall`
 - Explicit `base64-js` dependency
 - `lib/` is build output (`yarn build` / `prepare`); not committed
 
@@ -45,15 +46,26 @@ await stream.requests.send(chunk1);
 await stream.requests.send(chunk2);
 await stream.requests.complete();
 const { response: uploadResponse } = await stream;
+
+// Bidirectional streaming: interleaved requests and responses
+const bidi = GrpcClient.bidiStreamCall('/package.Service/Chat', headers, {
+  deadlineSeconds: 60,
+});
+bidi.responses.on('data', (chunk) => {
+  /* handle server message */
+});
+await bidi.requests.send(chunk1);
+await bidi.requests.send(chunk2);
+await bidi.requests.complete(); // half-close outbound
+const done = await bidi; // resolves on trailers
 ```
 
-Unary, server streaming, and client streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
+Unary, server streaming, client streaming, and bidirectional streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
 
 ## TODOs
 
 Gaps vs a full gRPC client (not yet supported or not exposed):
 
-- **Bidirectional streaming** — not implemented
 - **TLS options** — plaintext vs default TLS only; no custom CA, client certs, or mTLS
 - **Multiple channels / hosts** — single global host; no concurrent channels
 - **Interceptors** — no request/response middleware

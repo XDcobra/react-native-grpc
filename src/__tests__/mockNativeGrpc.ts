@@ -15,6 +15,7 @@ export const mockGrpc = {
   serverStreamingCall: jest.fn(async () => undefined),
   cancelGrpcCall: jest.fn(async () => true),
   clientStreamingCall: jest.fn(async () => undefined),
+  bidiStreamingCall: jest.fn(async () => undefined),
   finishClientStreaming: jest.fn(async () => undefined),
   resetConnection: jest.fn(),
   setKeepAlive: jest.fn(),

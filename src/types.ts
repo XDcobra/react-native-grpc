@@ -1,6 +1,6 @@
 export type GrpcMetadata = Record<string, string>;
 
-/** Options for unary / server-streaming / client-streaming RPCs. */
+/** Options for unary / streaming RPCs. */
 export type GrpcCallOptions = {
   /**
    * Per-call deadline in seconds. Overrides the global
@@ -68,6 +68,16 @@ export type CompletedGrpcClientStreamingCall = {
   readonly requestHeaders: GrpcMetadata;
   readonly headers?: GrpcMetadata;
   readonly response?: Uint8Array;
+  readonly status?: number;
+  readonly trailers?: GrpcMetadata;
+};
+
+/** Completed bidirectional streaming RPC (many requests, many responses). */
+export type CompletedGrpcBidiStreamingCall = {
+  readonly method: string;
+  readonly requestHeaders: GrpcMetadata;
+  readonly headers?: GrpcMetadata;
+  readonly responses?: GrpcServerOutputStream;
   readonly status?: number;
   readonly trailers?: GrpcMetadata;
 };

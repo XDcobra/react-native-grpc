@@ -240,3 +240,93 @@ describe('GrpcClient.clientStreamCall', () => {
     expect(mockGrpc.cancelGrpcCall).toHaveBeenCalledWith(id);
   });
 });
+
+describe('GrpcClient.bidiStreamCall', () => {
+  it('sends/receives chunks, completes, and awaits trailers', async () => {
+    const call = GrpcClient.bidiStreamCall(
+      '/svc/Bidi',
+      { authorization: 'Bearer z' },
+      { deadlineSeconds: 45 }
+    );
+
+    const chunks: Uint8Array[] = [];
+    call.responses.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    await call.requests.send(new Uint8Array([1, 2]));
+    expect(mockGrpc.bidiStreamingCall).toHaveBeenCalledTimes(1);
+    const [id, path, obj1, headers1] = mockGrpc.bidiStreamingCall.mock
+      .calls[0] as any;
+    expect(path).toBe('/svc/Bidi');
+    expect(obj1.data).toBe(fromByteArray(new Uint8Array([1, 2])));
+    expect(obj1.deadlineSeconds).toBe(45);
+    expect(headers1).toEqual({ authorization: 'Bearer z' });
+
+    await call.requests.send(new Uint8Array([3]));
+    expect(mockGrpc.bidiStreamingCall).toHaveBeenCalledTimes(2);
+    const [id2, , obj2, headers2] = mockGrpc.bidiStreamingCall.mock
+      .calls[1] as any;
+    expect(id2).toBe(id);
+    expect(obj2.data).toBe(fromByteArray(new Uint8Array([3])));
+    expect(obj2.deadlineSeconds).toBeUndefined();
+    expect(headers2).toEqual({});
+
+    emitGrpcCall({ id, type: 'headers', payload: { ok: '1' } });
+    emitGrpcCall({
+      id,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([10])),
+    });
+    emitGrpcCall({
+      id,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([11, 12])),
+    });
+
+    expect(chunks).toEqual([new Uint8Array([10]), new Uint8Array([11, 12])]);
+
+    await call.requests.complete();
+    expect(mockGrpc.finishClientStreaming).toHaveBeenCalledWith(id);
+
+    emitGrpcCall({ id, type: 'trailers', payload: { 'grpc-status': '0' } });
+
+    const completed = await call;
+    expect(completed.headers).toEqual({ ok: '1' });
+    expect(completed.trailers).toEqual({ 'grpc-status': '0' });
+    expect(completed.responses).toBe(call.responses);
+    expect(completed.status).toBe(0);
+  });
+
+  it('rejects with GrpcError on native error event', async () => {
+    const call = GrpcClient.bidiStreamCall('/svc/FailBidi');
+    await call.requests.send(new Uint8Array([0]));
+    const [id] = mockGrpc.bidiStreamingCall.mock.calls[0] as any;
+
+    const errors: unknown[] = [];
+    call.responses.on('error', (err) => {
+      errors.push(err);
+    });
+
+    emitGrpcCall({
+      id,
+      type: 'error',
+      error: 'INTERNAL',
+      code: 13,
+    });
+
+    await expect(call).rejects.toBeInstanceOf(GrpcError);
+    await expect(call).rejects.toMatchObject({ error: 'INTERNAL', code: 13 });
+    expect(errors[0]).toBeInstanceOf(GrpcError);
+  });
+
+  it('calls cancelGrpcCall when cancelled', async () => {
+    const call = GrpcClient.bidiStreamCall('/svc/CancelBidi');
+    await call.requests.send(new Uint8Array([0]));
+    const [id] = mockGrpc.bidiStreamingCall.mock.calls[0] as any;
+
+    call.cancel();
+    await Promise.resolve();
+    expect(mockGrpc.cancelGrpcCall).toHaveBeenCalledWith(id);
+  });
+});

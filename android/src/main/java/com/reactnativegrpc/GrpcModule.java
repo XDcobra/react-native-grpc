@@ -171,6 +171,30 @@ public class GrpcModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
+  public void bidiStreamingCall(int id, String path, ReadableMap obj, ReadableMap headers, final Promise promise) {
+    ClientCall call = callsMap.get(id);
+
+    if (call == null) {
+      try {
+        call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.BIDI_STREAMING, headers, resolveDeadline(obj));
+      } catch (Exception e) {
+        promise.reject(e);
+
+        return;
+      }
+
+      callsMap.put(id, call);
+    }
+
+    byte[] data = Base64.decode(obj.getString("data"), Base64.NO_WRAP);
+
+    call.sendMessage(data);
+    call.request(1);
+
+    promise.resolve(null);
+  }
+
+  @ReactMethod
   public void finishClientStreaming(int id, final Promise promise) {
     if (callsMap.containsKey(id)) {
       ClientCall call = callsMap.get(id);
@@ -283,7 +307,8 @@ public class GrpcModule extends ReactContextBaseJavaModule {
 
         emitEvent("grpc-call", event);
 
-        if (methodType == MethodDescriptor.MethodType.SERVER_STREAMING) {
+        if (methodType == MethodDescriptor.MethodType.SERVER_STREAMING
+            || methodType == MethodDescriptor.MethodType.BIDI_STREAMING) {
           call.request(1);
         }
       }
