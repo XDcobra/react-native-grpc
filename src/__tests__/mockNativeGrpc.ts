@@ -7,6 +7,7 @@ export const mockGrpc = {
   getIsInsecure: jest.fn(async () => true),
   setHost: jest.fn(),
   setInsecure: jest.fn(),
+  setTlsOptions: jest.fn(),
   setCompression: jest.fn(),
   setResponseSizeLimit: jest.fn(),
   setCallDeadlineSeconds: jest.fn(),

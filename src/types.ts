@@ -10,6 +10,30 @@ export type GrpcCallOptions = {
   deadlineSeconds?: number;
 };
 
+/**
+ * Channel TLS configuration. Each `setTlsOptions` call **replaces** the prior
+ * config (omitted / null / undefined fields are cleared). Call before
+ * `initGrpcChannel()`. Ignored while `setInsecure(true)`.
+ */
+export type GrpcTlsOptions = {
+  /** PEM trust roots (one or more certs). Clears → platform/gRPC defaults. */
+  rootCertsPem?: string | null;
+  /** PEM client certificate chain for mTLS (requires `privateKeyPem`). */
+  certificateChainPem?: string | null;
+  /** PEM client private key for mTLS (requires `certificateChainPem`). */
+  privateKeyPem?: string | null;
+  /** Hostname for TLS verification / SNI (e.g. dial by IP). */
+  hostNameOverride?: string | null;
+  /**
+   * SHA-256 SPKI pins (standard base64). Optional `sha256/` prefix allowed
+   * (OkHttp style). At least one certificate in the server chain must match.
+   * Android: enforced at handshake (system or custom trust + pin).
+   * iOS: requires `rootCertsPem` containing a matching cert (gRPC ObjC has no
+   * SPKI verify hook); those PEMs become the trust roots.
+   */
+  spkiSha256Pins?: string[] | null;
+};
+
 export type RemoveListener = () => void;
 
 export interface GrpcServerInputStream {

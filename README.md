@@ -5,15 +5,13 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 
 ## Changes vs upstream
 
-- Removed deprecated `jcenter()` (required for modern AGP / RN 0.86+)
+- Builds and runs with React Native New Architecture (Native Module interop)
 - Android `namespace 'com.reactnativegrpc'` (no `package` in AndroidManifest)
 - `minSdkVersion` 24
-- Builds and runs with React Native New Architecture (Native Module interop)
 - Per-call deadline via `setCallDeadlineSeconds` (default 120s) and per-RPC `options.deadlineSeconds`
 - Client streaming via `GrpcClient.clientStreamCall`
 - Bidirectional streaming via `GrpcClient.bidiStreamCall`
-- Explicit `base64-js` dependency
-- `lib/` is build output (`yarn build` / `prepare`); not committed
+- TLS options via `GrpcClient.setTlsOptions` (custom CA, mTLS, hostname override, SPKI pins)
 
 ## Installation
 
@@ -28,9 +26,23 @@ npm install git+https://github.com/XDcobra/react-native-grpc.git
 ```ts
 import { GrpcClient, GrpcMetadata } from '@xdcobra/react-native-grpc';
 
-GrpcClient.setHost('192.168.1.10:50051');
-GrpcClient.setInsecure(true); // plaintext gRPC
+GrpcClient.setHost('api.example.com:443');
+GrpcClient.setInsecure(false); // TLS (system / gRPC default roots)
 GrpcClient.setCallDeadlineSeconds(120); // global default
+GrpcClient.initGrpcChannel();
+
+// Plaintext (dev only)
+// GrpcClient.setInsecure(true);
+
+// Custom CA and/or mTLS and/or dial-by-IP hostname override
+// (each setTlsOptions call replaces the previous TLS config)
+GrpcClient.setTlsOptions({
+  rootCertsPem: caPem, // optional (required on iOS when using spkiSha256Pins)
+  certificateChainPem: clientCertPem, // mTLS (with privateKeyPem)
+  privateKeyPem: clientKeyPem,
+  hostNameOverride: 'api.example.com', // optional
+  spkiSha256Pins: ['sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='],
+});
 GrpcClient.initGrpcChannel();
 
 const { response } = await GrpcClient.unaryCall(
@@ -62,16 +74,39 @@ const done = await bidi; // resolves on trailers
 
 Unary, server streaming, client streaming, and bidirectional streaming. Protobuf encode/decode is BYO (e.g. `@bufbuild/protobuf`).
 
+### TLS matrix
+
+| Mode | How |
+|------|-----|
+| Plaintext | `setInsecure(true)` |
+| Public CA (e.g. Let's Encrypt) | `setInsecure(false)`, no `setTlsOptions` |
+| Custom / private CA | `rootCertsPem` |
+| mTLS | `certificateChainPem` + `privateKeyPem` (both required) |
+| Dial IP, cert for DNS name | `hostNameOverride` |
+| SPKI pin (SHA-256) | `spkiSha256Pins: ['base64…']` (optional `sha256/` prefix) |
+
+PEM values are strings (load from app assets/bundle yourself). Call `setTlsOptions` before `initGrpcChannel()`.
+
+**SPKI pins:** at least one cert in the server chain must match. On **Android**, pins work with the system trust store and/or `rootCertsPem`. On **iOS** (gRPC ObjC has no handshake SPKI hook), set `rootCertsPem` to the pinned leaf/intermediate PEM as well. Pins are checked against that PEM at config time, then used as trust roots.
+
+Generate a pin (OpenSSL):
+
+```sh
+openssl x509 -in leaf.pem -pubkey -noout \
+  | openssl pkey -pubin -outform DER \
+  | openssl dgst -sha256 -binary \
+  | openssl enc -base64
+```
+
 ## TODOs
 
 Gaps vs a full gRPC client (not yet supported or not exposed):
 
-- **TLS options** — plaintext vs default TLS only; no custom CA, client certs, or mTLS
-- **Multiple channels / hosts** — single global host; no concurrent channels
-- **Interceptors** — no request/response middleware
-- **Retry / hedging** — no client-side retry policy
-- **Cross-platform connection events** — Android-only (`onConnectionStateChange`, `enterIdle`, …)
-- **Codegen / stubs** — raw method paths + bytes; no generated service clients
+- **Multiple channels / hosts**: single global host; no concurrent channels
+- **Interceptors**: no request/response middleware
+- **Retry / hedging**: no client-side retry policy
+- **Cross-platform connection events**: Android-only (`onConnectionStateChange`, `enterIdle`, …)
+- **Codegen / stubs**: raw method paths + bytes; no generated service clients
 
 
 ## License
