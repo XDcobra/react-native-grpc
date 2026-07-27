@@ -14,7 +14,7 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 - TLS options via `GrpcClient.setTlsOptions` (custom CA, mTLS, hostname override, SPKI pins)
 - Multiple concurrent channels via `createChannel` / `GrpcChannel` (immutable per-channel config)
 - Interceptors via `createChannel({ interceptors })` / `GrpcClient.setInterceptors` (auth, logging, remapping)
-- Unary retry / hedging via `createChannel({ retry | hedging })` / `GrpcClient.setRetryPolicy` / `setHedgingPolicy` (A6-style)
+- Unary retry / hedging via `createChannel({ retry | hedging })` / `GrpcClient.setRetryPolicy` / `setHedgingPolicy` ([gRFC A6](https://github.com/grpc/proposal/blob/master/A6-client-retries.md)-style)
 
 ## Installation
 
@@ -159,7 +159,7 @@ Hooks: `onStart`, `onSendMessage`, `onHeaders`, `onMessage`, `onTrailers`, `onEr
 
 ### Retry / hedging (unary only)
 
-A6-inspired client policies for **unary** RPCs. Retry and hedging are mutually exclusive. Streams ignore these policies. Without a policy there is no automatic retry.
+[gRFC A6](https://github.com/grpc/proposal/blob/master/A6-client-retries.md)-inspired client policies for **unary** RPCs. Retry and hedging are mutually exclusive. Streams ignore these policies. Without a policy there is no automatic retry.
 
 ```ts
 import {
@@ -223,7 +223,7 @@ openssl x509 -in leaf.pem -pubkey -noout \
 
 Gaps vs a full gRPC client (not yet supported or not exposed):
 
-- **Retry / hedging — remaining**: DNS/service-config JSON; retry throttling (A6); stream retry / transparent retry after first response message; native `enableRetry` / C-core service config (JS unary policies are implemented)
+- **Retry / hedging — remaining**: DNS/service-config JSON; retry throttling ([gRFC A6](https://github.com/grpc/proposal/blob/master/A6-client-retries.md)); stream retry / transparent retry after first response message; native `enableRetry` / C-core service config (JS unary policies are implemented)
 - **Cross-platform connection events**: Android-only (`onConnectionStateChange`, `enterIdle`, …)
 - **Codegen / stubs**: raw method paths + bytes; no generated service clients
 
