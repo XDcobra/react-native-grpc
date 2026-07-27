@@ -12,15 +12,18 @@
     "lib",
     "android",
     "ios",
-    "cpp",
     "react-native-grpc.podspec",
     "!lib/typescript/example",
-    "!android/build",
-    "!ios/build",
     "!**/__tests__",
     "!**/__fixtures__",
     "!**/__mocks__",
-    "!**/node_modules"
+    "!**/node_modules",
+    "!android/build",
+    "!android/.project",
+    "!android/.settings",
+    "!android/.gradle",
+    "!ios/build",
+    "!ios/Grpc.xcodeproj"
   ],
   "scripts": {
     "test": "jest",
