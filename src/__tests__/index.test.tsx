@@ -37,6 +37,7 @@ import {
   GrpcClient,
   GrpcError,
   GrpcInterceptor,
+  GrpcStatusCode,
 } from '../index';
 
 /** Unary/server-stream native start is deferred until interceptor onStart settles. */
@@ -48,6 +49,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockChannels.clear();
   GrpcClient.setInterceptors([]);
+  GrpcClient.setRetryPolicy(null);
+  GrpcClient.setHedgingPolicy(null);
 });
 
 describe('GrpcClient channel config', () => {
@@ -699,5 +702,156 @@ describe('interceptors', () => {
     emitGrpcCall({ id, type: 'trailers', payload: {} });
     await call;
     channel.close();
+  });
+});
+
+describe('retry / hedging (unary)', () => {
+  const retryPolicy = {
+    maxAttempts: 3,
+    initialBackoff: '0ms',
+    maxBackoff: '0ms',
+    backoffMultiplier: 1,
+    retryableStatusCodes: ['UNAVAILABLE' as const],
+  };
+
+  it('retries UNAVAILABLE then succeeds', async () => {
+    GrpcClient.setRetryPolicy(retryPolicy);
+
+    const call = GrpcClient.unaryCall('/svc/Retry', new Uint8Array([1]));
+    await flushNativeStart();
+    expect(mockGrpc.unaryCall).toHaveBeenCalledTimes(1);
+    const [id1] = mockGrpc.unaryCall.mock.calls[0] as any;
+
+    emitGrpcCall({
+      id: id1,
+      type: 'error',
+      error: 'UNAVAILABLE',
+      code: GrpcStatusCode.UNAVAILABLE,
+    });
+    await flushNativeStart();
+    await flushNativeStart();
+    expect(mockGrpc.unaryCall).toHaveBeenCalledTimes(2);
+    const [id2] = mockGrpc.unaryCall.mock.calls[1] as any;
+
+    emitGrpcCall({ id: id2, type: 'headers', payload: {} });
+    emitGrpcCall({
+      id: id2,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([9])),
+    });
+    emitGrpcCall({ id: id2, type: 'trailers', payload: {} });
+
+    const completed = await call;
+    expect(completed.response).toEqual(new Uint8Array([9]));
+  });
+
+  it('does not retry non-retryable status codes', async () => {
+    GrpcClient.setRetryPolicy(retryPolicy);
+
+    const call = GrpcClient.unaryCall('/svc/NoRetry', new Uint8Array([0]));
+    await flushNativeStart();
+    const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
+    emitGrpcCall({
+      id,
+      type: 'error',
+      error: 'INTERNAL',
+      code: GrpcStatusCode.INTERNAL,
+    });
+
+    await expect(call).rejects.toMatchObject({
+      error: 'INTERNAL',
+      code: GrpcStatusCode.INTERNAL,
+    });
+    expect(mockGrpc.unaryCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables channel retry with per-call retry: false', async () => {
+    GrpcClient.setRetryPolicy(retryPolicy);
+
+    const call = GrpcClient.unaryCall(
+      '/svc/Off',
+      new Uint8Array([0]),
+      {},
+      {
+        retry: false,
+      }
+    );
+    await flushNativeStart();
+    const [id] = mockGrpc.unaryCall.mock.calls[0] as any;
+    emitGrpcCall({
+      id,
+      type: 'error',
+      error: 'UNAVAILABLE',
+      code: GrpcStatusCode.UNAVAILABLE,
+    });
+
+    await expect(call).rejects.toMatchObject({
+      code: GrpcStatusCode.UNAVAILABLE,
+    });
+    expect(mockGrpc.unaryCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects createChannel when both retry and hedging are set', () => {
+    expect(() =>
+      createChannel({
+        host: 'x:443',
+        insecure: true,
+        retry: retryPolicy,
+        hedging: { maxAttempts: 2, hedgingDelay: '0s' },
+      })
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('hedges parallel attempts and cancels losers on success', async () => {
+    GrpcClient.setHedgingPolicy({
+      maxAttempts: 2,
+      hedgingDelay: '0s',
+      nonFatalStatusCodes: ['UNAVAILABLE'],
+    });
+
+    const call = GrpcClient.unaryCall('/svc/Hedge', new Uint8Array([1]));
+    await flushNativeStart();
+    expect(mockGrpc.unaryCall.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    const [id1] = mockGrpc.unaryCall.mock.calls[0] as any;
+    const [id2] = mockGrpc.unaryCall.mock.calls[1] as any;
+
+    emitGrpcCall({ id: id1, type: 'headers', payload: {} });
+    emitGrpcCall({
+      id: id1,
+      type: 'response',
+      payload: fromByteArray(new Uint8Array([7])),
+    });
+    emitGrpcCall({ id: id1, type: 'trailers', payload: {} });
+
+    await call;
+    await flushNativeStart();
+    expect(mockGrpc.cancelGrpcCall).toHaveBeenCalled();
+    const cancelledIds = mockGrpc.cancelGrpcCall.mock.calls.map(
+      (c: any) => c[0]
+    );
+    expect(cancelledIds).toContain(id2);
+  });
+
+  it('ignores retry policy for server streaming', async () => {
+    GrpcClient.setRetryPolicy(retryPolicy);
+    mockGrpc.unaryCall.mockClear();
+    const call = GrpcClient.serverStreamCall(
+      '/svc/StreamNoRetry',
+      new Uint8Array([0])
+    );
+    await flushNativeStart();
+    const [id] = mockGrpc.serverStreamingCall.mock.calls[0] as any;
+    emitGrpcCall({
+      id,
+      type: 'error',
+      error: 'UNAVAILABLE',
+      code: GrpcStatusCode.UNAVAILABLE,
+    });
+    await expect(call).rejects.toMatchObject({
+      code: GrpcStatusCode.UNAVAILABLE,
+    });
+    expect(mockGrpc.serverStreamingCall).toHaveBeenCalledTimes(1);
+    expect(mockGrpc.unaryCall).not.toHaveBeenCalled();
   });
 });
