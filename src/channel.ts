@@ -1,4 +1,5 @@
 import { GrpcCallApi, normalizeTlsOptions } from './client';
+import type { GrpcInterceptor } from './interceptors';
 import { nativeGrpc } from './native';
 import { GrpcChannelConfig } from './types';
 
@@ -11,8 +12,12 @@ let channelCtr = 1;
 export class GrpcChannel extends GrpcCallApi {
   private closed = false;
 
-  constructor(channelId: string, private readonly host: string) {
-    super(channelId);
+  constructor(
+    channelId: string,
+    private readonly host: string,
+    interceptors: readonly GrpcInterceptor[] = []
+  ) {
+    super(channelId, interceptors);
   }
 
   /** Host this channel was created with. */
@@ -69,5 +74,9 @@ export function createChannel(config: GrpcChannelConfig): GrpcChannel {
     keepAliveTimeOut: keepAlive?.keepAliveTimeOut ?? 0,
   });
 
-  return new GrpcChannel(channelId, config.host.trim());
+  return new GrpcChannel(
+    channelId,
+    config.host.trim(),
+    config.interceptors ?? []
+  );
 }
