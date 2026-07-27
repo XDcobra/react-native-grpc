@@ -1,6 +1,7 @@
 import { AbortController, AbortSignal } from 'abort-controller';
 import { fromByteArray, toByteArray } from 'base64-js';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { GrpcBidiStreamingCall } from './bidi-streaming';
 import { GrpcClientStreamingCall, ServerInputStream } from './client-streaming';
 import { GrpcError } from './errors';
 import {
@@ -39,6 +40,12 @@ type GrpcType = {
   ): Promise<void>;
   cancelGrpcCall: (id: number) => Promise<boolean>;
   clientStreamingCall(
+    id: number,
+    path: string,
+    obj: GrpcRequestObject,
+    requestHeaders?: GrpcMetadata
+  ): Promise<void>;
+  bidiStreamingCall(
     id: number,
     path: string,
     obj: GrpcRequestObject,
@@ -390,6 +397,65 @@ export class GrpcClient {
       requests,
       headers.promise,
       response.promise,
+      trailers.promise,
+      abort
+    );
+
+    call.then(
+      (result) => result,
+      () => abort.abort()
+    );
+
+    return call;
+  }
+
+  /**
+   * Bidirectional streaming RPC: interleaved request and response messages.
+   * Native call starts on the first `requests.send(...)`.
+   * Registers only the `data` stream (plus headers/trailers) — no unary `response`.
+   */
+  bidiStreamCall(
+    method: string,
+    requestHeaders?: GrpcMetadata,
+    options?: GrpcCallOptions
+  ): GrpcBidiStreamingCall {
+    const id = getId();
+    const abort = new AbortController();
+    const headersMeta = requestHeaders || {};
+
+    abort.signal.addEventListener('abort', () => {
+      nativeGrpc().cancelGrpcCall(id);
+    });
+
+    const headers = createDeferred<GrpcMetadata>(abort.signal);
+    const trailers = createDeferred<GrpcMetadata>(abort.signal);
+    const stream = new ServerOutputStream();
+
+    deferredMap[id] = {
+      headers,
+      trailers,
+      data: stream,
+    };
+
+    const requests = new ServerInputStream(
+      (data, isFirst) => {
+        const obj = buildRequestObject(data, isFirst ? options : undefined);
+        return nativeGrpc().bidiStreamingCall(
+          id,
+          method,
+          obj,
+          isFirst ? headersMeta : {}
+        );
+      },
+      () => nativeGrpc().finishClientStreaming(id)
+    );
+
+    const call = new GrpcBidiStreamingCall(
+      method,
+      headersMeta,
+      requests,
+      headers.promise,
+      stream,
       trailers.promise,
       abort
     );
