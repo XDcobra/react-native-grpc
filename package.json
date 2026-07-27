@@ -58,7 +58,10 @@
     "android",
     "grpc"
   ],
-  "repository": "https://github.com/XDcobra/react-native-grpc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XDcobra/react-native-grpc.git"
+  },
   "author": "XDcobra (fork; original Krishna / Mitch528)",
   "license": "MIT",
   "bugs": {
