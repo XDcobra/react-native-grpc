@@ -8,7 +8,7 @@ import {
   GrpcServerStreamingCall,
   ServerOutputStream,
 } from './server-streaming';
-import { GrpcCallOptions, GrpcMetadata } from './types';
+import { GrpcCallOptions, GrpcMetadata, GrpcTlsOptions } from './types';
 import { GrpcUnaryCall } from './unary';
 
 type GrpcRequestObject = {
@@ -22,6 +22,12 @@ type GrpcType = {
   getIsInsecure: () => Promise<boolean>;
   setHost(host: string): void;
   setInsecure(insecure: boolean): void;
+  setTlsOptions(options: {
+    rootCertsPem: string | null;
+    certificateChainPem: string | null;
+    privateKeyPem: string | null;
+    hostNameOverride: string | null;
+  }): void;
   setCompression(enable: boolean, compressorName: string): void;
   setResponseSizeLimit(limitInBytes: number): void;
   setCallDeadlineSeconds(seconds: number): void;
@@ -218,6 +224,32 @@ export class GrpcClient {
   }
   setInsecure(insecure: boolean): void {
     nativeGrpc().setInsecure(insecure);
+  }
+  /**
+   * Replace channel TLS options (custom CA, mTLS, hostname override).
+   * Each call replaces the previous config; omitted fields are cleared.
+   * Apply before `initGrpcChannel()`. Ignored while insecure/plaintext.
+   */
+  setTlsOptions(options: GrpcTlsOptions = {}): void {
+    const rootCertsPem = options.rootCertsPem ?? null;
+    const certificateChainPem = options.certificateChainPem ?? null;
+    const privateKeyPem = options.privateKeyPem ?? null;
+    const hostNameOverride = options.hostNameOverride ?? null;
+
+    const hasCert = !!certificateChainPem;
+    const hasKey = !!privateKeyPem;
+    if (hasCert !== hasKey) {
+      throw new Error(
+        'mTLS requires both certificateChainPem and privateKeyPem'
+      );
+    }
+
+    nativeGrpc().setTlsOptions({
+      rootCertsPem,
+      certificateChainPem,
+      privateKeyPem,
+      hostNameOverride,
+    });
   }
   setCompression(enable: boolean, compressorName: string): void {
     nativeGrpc().setCompression(enable, compressorName);
