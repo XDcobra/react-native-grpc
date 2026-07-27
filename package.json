@@ -50,6 +50,10 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
+  "packageManager": "yarn@1.22.22",
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
     "@react-native-community/eslint-config": "^3.0.0",
     "@release-it/keep-a-changelog": "^3.0.0",
