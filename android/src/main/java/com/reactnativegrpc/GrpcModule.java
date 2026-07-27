@@ -105,7 +105,7 @@ public class GrpcModule extends ReactContextBaseJavaModule {
     ClientCall call;
 
     try {
-      call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.UNARY, headers);
+      call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.UNARY, headers, resolveDeadline(obj));
     } catch (Exception e) {
       promise.reject(e);
 
@@ -128,7 +128,7 @@ public class GrpcModule extends ReactContextBaseJavaModule {
     ClientCall call;
 
     try {
-      call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.SERVER_STREAMING, headers);
+      call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.SERVER_STREAMING, headers, resolveDeadline(obj));
     } catch (Exception e) {
       promise.reject(e);
 
@@ -152,7 +152,7 @@ public class GrpcModule extends ReactContextBaseJavaModule {
 
     if (call == null) {
       try {
-        call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.CLIENT_STREAMING, headers);
+        call = this.startGrpcCall(id, path, MethodDescriptor.MethodType.CLIENT_STREAMING, headers, resolveDeadline(obj));
       } catch (Exception e) {
         promise.reject(e);
 
@@ -195,7 +195,21 @@ public class GrpcModule extends ReactContextBaseJavaModule {
     }
   }
 
-  private ClientCall startGrpcCall(int id, String path, MethodDescriptor.MethodType methodType, ReadableMap headers) throws Exception {
+  /** Resolve per-call deadline: obj.deadlineSeconds if set, else global default. */
+  private long resolveDeadline(ReadableMap obj) {
+    if (obj != null && obj.hasKey("deadlineSeconds") && !obj.isNull("deadlineSeconds")) {
+      return Math.max(0, (long) obj.getDouble("deadlineSeconds"));
+    }
+    return this.callDeadlineSeconds;
+  }
+
+  private ClientCall startGrpcCall(
+      int id,
+      String path,
+      MethodDescriptor.MethodType methodType,
+      ReadableMap headers,
+      long deadlineSeconds
+  ) throws Exception {
     if (this.managedChannel == null) {
       throw new Exception("Channel not created");
     }
@@ -222,8 +236,8 @@ public class GrpcModule extends ReactContextBaseJavaModule {
     if (!this.compressorName.isEmpty()) {
       callOptions = callOptions.withCompression(this.compressorName);
     }
-    if (this.callDeadlineSeconds > 0) {
-      callOptions = callOptions.withDeadlineAfter(this.callDeadlineSeconds, TimeUnit.SECONDS);
+    if (deadlineSeconds > 0) {
+      callOptions = callOptions.withDeadlineAfter(deadlineSeconds, TimeUnit.SECONDS);
     }
 
     ClientCall call = this.managedChannel.newCall(descriptor, callOptions);

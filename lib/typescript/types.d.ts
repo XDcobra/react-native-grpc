@@ -1,4 +1,13 @@
 export declare type GrpcMetadata = Record<string, string>;
+/** Options for unary / server-streaming RPCs. */
+export declare type GrpcCallOptions = {
+    /**
+     * Per-call deadline in seconds. Overrides the global
+     * `setCallDeadlineSeconds` default for this RPC only.
+     * `0` = no deadline (Android); iOS still applies a positive timeout when set.
+     */
+    deadlineSeconds?: number;
+};
 export declare type RemoveListener = () => void;
 export interface GrpcServerInputStream {
     send(data: Uint8Array): Promise<void>;

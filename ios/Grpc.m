@@ -109,7 +109,8 @@
     return @[@"grpc-call"];
 }
 
-- (GRPCCallOptions *)getCallOptionsWithHeaders:(NSDictionary *)headers {
+- (GRPCCallOptions *)getCallOptionsWithHeaders:(NSDictionary *)headers
+                              deadlineSeconds:(NSNumber *)deadlineSeconds {
     GRPCMutableCallOptions *options = [[GRPCMutableCallOptions alloc] init];
     options.initialMetadata = headers;
     options.transport = self.grpcInsecure ? GRPCDefaultTransportImplList.core_insecure : GRPCDefaultTransportImplList.core_secure;
@@ -117,8 +118,17 @@
     if (self.grpcResponseSizeLimit != nil) {
         options.responseSizeLimit = self.grpcResponseSizeLimit.unsignedLongValue;
     }
-    NSTimeInterval deadline = self.grpcCallDeadlineSeconds > 0 ? self.grpcCallDeadlineSeconds : 120;
-    options.timeout = deadline;
+    NSTimeInterval deadline;
+    if (deadlineSeconds != nil) {
+        deadline = MAX(0, [deadlineSeconds doubleValue]);
+    } else if (self.grpcCallDeadlineSeconds > 0) {
+        deadline = self.grpcCallDeadlineSeconds;
+    } else {
+        deadline = 120;
+    }
+    if (deadline > 0) {
+        options.timeout = deadline;
+    }
 
     return options;
 }
@@ -163,7 +173,7 @@ RCT_EXPORT_METHOD(unaryCall:
         rejecter:(RCTPromiseRejectBlock)reject) {
     NSData *requestData = [[NSData alloc] initWithBase64EncodedString:[obj valueForKey:@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
 
-    GRPCCall2 *call = [self startGrpcCallWithId:callId path:path headers:headers];
+    GRPCCall2 *call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj];
 
     [call writeData:requestData];
     [call finish];
@@ -182,7 +192,7 @@ RCT_EXPORT_METHOD(serverStreamingCall:
         rejecter:(RCTPromiseRejectBlock)reject) {
     NSData *requestData = [[NSData alloc] initWithBase64EncodedString:[obj valueForKey:@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
 
-    GRPCCall2 *call = [self startGrpcCallWithId:callId path:path headers:headers];
+    GRPCCall2 *call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj];
 
     [call writeData:requestData];
     [call finish];
@@ -219,7 +229,7 @@ RCT_EXPORT_METHOD(clientStreamingCall:
     GRPCCall2 *call = [calls objectForKey:callId];
 
     if (call == nil) {
-        call = [self startGrpcCallWithId:callId path:path headers:headers];
+        call = [self startGrpcCallWithId:callId path:path headers:headers deadlineFromObj:obj];
 
         [calls setObject:call forKey:callId];
     }
@@ -244,12 +254,21 @@ RCT_EXPORT_METHOD(finishClientStreaming:
     }
 }
 
-- (GRPCCall2 *)startGrpcCallWithId:(NSNumber *)callId path:(NSString *)path headers:(NSDictionary *)headers {
+- (GRPCCall2 *)startGrpcCallWithId:(NSNumber *)callId
+                              path:(NSString *)path
+                           headers:(NSDictionary *)headers
+                   deadlineFromObj:(NSDictionary *)obj {
     GRPCRequestOptions *requestOptions = [[GRPCRequestOptions alloc] initWithHost:self.grpcHost
                                                                              path:path
                                                                            safety:GRPCCallSafetyDefault];
 
-    GRPCCallOptions *callOptions = [self getCallOptionsWithHeaders:headers];
+    NSNumber *deadlineOverride = nil;
+    id rawDeadline = [obj valueForKey:@"deadlineSeconds"];
+    if ([rawDeadline isKindOfClass:[NSNumber class]]) {
+        deadlineOverride = (NSNumber *)rawDeadline;
+    }
+
+    GRPCCallOptions *callOptions = [self getCallOptionsWithHeaders:headers deadlineSeconds:deadlineOverride];
 
     GrpcResponseHandler *handler = [[GrpcResponseHandler alloc] initWithInitialMetadataCallback:^(NSDictionary *initialMetadata) {
                 if (self->hasListeners) {

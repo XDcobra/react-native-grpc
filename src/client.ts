@@ -6,11 +6,13 @@ import {
   GrpcServerStreamingCall,
   ServerOutputStream,
 } from './server-streaming';
-import { GrpcMetadata } from './types';
+import { GrpcCallOptions, GrpcMetadata } from './types';
 import { GrpcUnaryCall } from './unary';
 
 type GrpcRequestObject = {
   data: string;
+  /** Optional per-call override; native falls back to global default when omitted. */
+  deadlineSeconds?: number;
 };
 
 type GrpcType = {
@@ -81,7 +83,13 @@ type GrpcEvent = {
   type: GrpcEventType;
 } & GrpcEventPayload;
 
-const { Grpc } = NativeModules as { Grpc: GrpcType };
+function nativeGrpc(): GrpcType {
+  const grpc = (NativeModules as { Grpc: GrpcType }).Grpc;
+  if (!grpc) {
+    throw new Error('NativeModules.Grpc is not linked');
+  }
+  return grpc;
+}
 
 const Emitter = new NativeEventEmitter(NativeModules.Grpc);
 
@@ -171,6 +179,19 @@ function getId(): number {
   return idCtr++;
 }
 
+function buildRequestObject(
+  data: Uint8Array,
+  options?: GrpcCallOptions
+): GrpcRequestObject {
+  const obj: GrpcRequestObject = {
+    data: fromByteArray(data),
+  };
+  if (options?.deadlineSeconds !== undefined) {
+    obj.deadlineSeconds = options.deadlineSeconds;
+  }
+  return obj;
+}
+
 export class GrpcClient {
   constructor() {
     Emitter.addListener('grpc-call', handleGrpcEvent);
@@ -179,30 +200,30 @@ export class GrpcClient {
     Emitter.removeAllListeners('grpc-call');
   }
   getHost(): Promise<string> {
-    return Grpc.getHost();
+    return nativeGrpc().getHost();
   }
   setHost(host: string): void {
-    Grpc.setHost(host);
+    nativeGrpc().setHost(host);
   }
   getInsecure(): Promise<boolean> {
-    return Grpc.getIsInsecure();
+    return nativeGrpc().getIsInsecure();
   }
   setInsecure(insecure: boolean): void {
-    Grpc.setInsecure(insecure);
+    nativeGrpc().setInsecure(insecure);
   }
   setCompression(enable: boolean, compressorName: string): void {
-    Grpc.setCompression(enable, compressorName);
+    nativeGrpc().setCompression(enable, compressorName);
   }
   setResponseSizeLimit(limitInBytes: number): void {
-    Grpc.setResponseSizeLimit(limitInBytes);
+    nativeGrpc().setResponseSizeLimit(limitInBytes);
   }
-  /** Per-call deadline in seconds (Android/iOS). Default 120. 0 = no deadline (Android). */
+  /** Global per-call deadline in seconds (Android/iOS). Default 120. Overridable per RPC via options. */
   setCallDeadlineSeconds(seconds: number): void {
-    Grpc.setCallDeadlineSeconds(seconds);
+    nativeGrpc().setCallDeadlineSeconds(seconds);
   }
 
   initGrpcChannel() {
-    Grpc.initGrpcChannel();
+    nativeGrpc().initGrpcChannel();
   }
 
   setKeepAlive(
@@ -210,43 +231,41 @@ export class GrpcClient {
     keepAliveTime: number,
     keepAliveTimeOut: number
   ): void {
-    Grpc.setKeepAlive(enable, keepAliveTime, keepAliveTimeOut);
+    nativeGrpc().setKeepAlive(enable, keepAliveTime, keepAliveTimeOut);
   }
 
   resetConnection(message: string): void {
     if (!this.isAndroid()) return;
-    Grpc.resetConnection(message);
+    nativeGrpc().resetConnection(message);
   }
   setUiLogEnabled(enable: boolean): void {
     if (!this.isAndroid()) return;
-    Grpc.setUiLogEnabled(enable);
+    nativeGrpc().setUiLogEnabled(enable);
   }
 
   onConnectionStateChange(): void {
     if (!this.isAndroid()) return;
-    Grpc.onConnectionStateChange();
+    nativeGrpc().onConnectionStateChange();
   }
 
   enterIdle(): void {
     if (!this.isAndroid()) return;
-    Grpc.enterIdle();
+    nativeGrpc().enterIdle();
   }
 
   unaryCall(
     method: string,
     data: Uint8Array,
-    requestHeaders?: GrpcMetadata
+    requestHeaders?: GrpcMetadata,
+    options?: GrpcCallOptions
   ): GrpcUnaryCall {
-    const requestData = fromByteArray(data);
-    const obj: GrpcRequestObject = {
-      data: requestData,
-    };
+    const obj = buildRequestObject(data, options);
 
     const id = getId();
     const abort = new AbortController();
 
     abort.signal.addEventListener('abort', () => {
-      Grpc.cancelGrpcCall(id);
+      nativeGrpc().cancelGrpcCall(id);
     });
 
     const response = createDeferred<Uint8Array>(abort.signal);
@@ -259,7 +278,7 @@ export class GrpcClient {
       trailers,
     };
 
-    Grpc.unaryCall(id, method, obj, requestHeaders || {});
+    nativeGrpc().unaryCall(id, method, obj, requestHeaders || {});
 
     const call = new GrpcUnaryCall(
       method,
@@ -281,18 +300,16 @@ export class GrpcClient {
   serverStreamCall(
     method: string,
     data: Uint8Array,
-    requestHeaders?: GrpcMetadata
+    requestHeaders?: GrpcMetadata,
+    options?: GrpcCallOptions
   ): GrpcServerStreamingCall {
-    const requestData = fromByteArray(data);
-    const obj: GrpcRequestObject = {
-      data: requestData,
-    };
+    const obj = buildRequestObject(data, options);
 
     const id = getId();
     const abort = new AbortController();
 
     abort.signal.addEventListener('abort', () => {
-      Grpc.cancelGrpcCall(id);
+      nativeGrpc().cancelGrpcCall(id);
     });
 
     const headers = createDeferred<GrpcMetadata>(abort.signal);
@@ -306,7 +323,7 @@ export class GrpcClient {
       data: stream,
     };
 
-    Grpc.serverStreamingCall(id, method, obj, requestHeaders || {});
+    nativeGrpc().serverStreamingCall(id, method, obj, requestHeaders || {});
 
     const call = new GrpcServerStreamingCall(
       method,
@@ -331,4 +348,11 @@ export class GrpcClient {
   }
 }
 
-export { Grpc };
+/** Lazy binding to NativeModules.Grpc (works with Jest mocks / late link). */
+export const Grpc: GrpcType = new Proxy({} as GrpcType, {
+  get(_target, prop) {
+    const native = nativeGrpc();
+    const value = (native as any)[prop as string];
+    return typeof value === 'function' ? value.bind(native) : value;
+  },
+});
