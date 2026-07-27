@@ -49,6 +49,46 @@ describe('GrpcClient channel config', () => {
     expect(mockGrpc.setCallDeadlineSeconds).toHaveBeenCalledWith(120);
     expect(mockGrpc.initGrpcChannel).toHaveBeenCalled();
   });
+
+  it('forwards setTlsOptions with replace semantics', () => {
+    GrpcClient.setTlsOptions({
+      rootCertsPem:
+        '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----',
+      certificateChainPem:
+        '-----BEGIN CERTIFICATE-----\nCLIENT\n-----END CERTIFICATE-----',
+      privateKeyPem:
+        '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----',
+      hostNameOverride: 'api.example.com',
+    });
+
+    expect(mockGrpc.setTlsOptions).toHaveBeenCalledWith({
+      rootCertsPem:
+        '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----',
+      certificateChainPem:
+        '-----BEGIN CERTIFICATE-----\nCLIENT\n-----END CERTIFICATE-----',
+      privateKeyPem:
+        '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----',
+      hostNameOverride: 'api.example.com',
+    });
+
+    GrpcClient.setTlsOptions({ hostNameOverride: 'other.example.com' });
+    expect(mockGrpc.setTlsOptions).toHaveBeenLastCalledWith({
+      rootCertsPem: null,
+      certificateChainPem: null,
+      privateKeyPem: null,
+      hostNameOverride: 'other.example.com',
+    });
+  });
+
+  it('rejects incomplete mTLS pairs in setTlsOptions', () => {
+    expect(() =>
+      GrpcClient.setTlsOptions({
+        certificateChainPem:
+          '-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----',
+      })
+    ).toThrow(/mTLS requires both/);
+    expect(mockGrpc.setTlsOptions).not.toHaveBeenCalled();
+  });
 });
 
 describe('GrpcClient.unaryCall', () => {
