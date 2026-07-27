@@ -1,3 +1,5 @@
+import type { GrpcInterceptor } from './interceptors';
+
 export type GrpcMetadata = Record<string, string>;
 
 /** Options for unary / streaming RPCs. */
@@ -8,6 +10,11 @@ export type GrpcCallOptions = {
    * `0` = no deadline (Android); iOS still applies a positive timeout when set.
    */
   deadlineSeconds?: number;
+  /**
+   * Extra interceptors for this RPC only (appended after channel interceptors).
+   * Prefer channel-level `interceptors` / `setInterceptors` for shared middleware.
+   */
+  interceptors?: GrpcInterceptor[];
 };
 
 /**
@@ -58,10 +65,17 @@ export type GrpcChannelConfig = {
     keepAliveTime: number;
     keepAliveTimeOut: number;
   };
+  /**
+   * Request/response middleware for all RPCs on this channel (immutable).
+   * Per-RPC extras: `GrpcCallOptions.interceptors`.
+   */
+  interceptors?: GrpcInterceptor[];
 };
 
 /** Id of the singleton / legacy channel used by `GrpcClient` setters. */
 export const DEFAULT_CHANNEL_ID = 'default';
+
+export type { GrpcInterceptStart, GrpcInterceptor } from './interceptors';
 
 export type RemoveListener = () => void;
 
