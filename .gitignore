@@ -46,6 +46,8 @@ node_modules/
 npm-debug.log
 yarn-debug.log
 yarn-error.log
+# Project uses Yarn; ignore npm lockfile from accidental `npm install`
+package-lock.json
 
 # BUCK
 buck-out/
