@@ -27,6 +27,7 @@ type GrpcType = {
     certificateChainPem: string | null;
     privateKeyPem: string | null;
     hostNameOverride: string | null;
+    spkiSha256Pins: string[] | null;
   }): void;
   setCompression(enable: boolean, compressorName: string): void;
   setResponseSizeLimit(limitInBytes: number): void;
@@ -235,6 +236,10 @@ export class GrpcClient {
     const certificateChainPem = options.certificateChainPem ?? null;
     const privateKeyPem = options.privateKeyPem ?? null;
     const hostNameOverride = options.hostNameOverride ?? null;
+    const spkiSha256Pins =
+      options.spkiSha256Pins && options.spkiSha256Pins.length > 0
+        ? options.spkiSha256Pins
+        : null;
 
     const hasCert = !!certificateChainPem;
     const hasKey = !!privateKeyPem;
@@ -249,6 +254,7 @@ export class GrpcClient {
       certificateChainPem,
       privateKeyPem,
       hostNameOverride,
+      spkiSha256Pins,
     });
   }
   setCompression(enable: boolean, compressorName: string): void {

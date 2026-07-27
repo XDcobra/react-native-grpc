@@ -24,6 +24,14 @@ export type GrpcTlsOptions = {
   privateKeyPem?: string | null;
   /** Hostname for TLS verification / SNI (e.g. dial by IP). */
   hostNameOverride?: string | null;
+  /**
+   * SHA-256 SPKI pins (standard base64). Optional `sha256/` prefix allowed
+   * (OkHttp style). At least one certificate in the server chain must match.
+   * Android: enforced at handshake (system or custom trust + pin).
+   * iOS: requires `rootCertsPem` containing a matching cert (gRPC ObjC has no
+   * SPKI verify hook); those PEMs become the trust roots.
+   */
+  spkiSha256Pins?: string[] | null;
 };
 
 export type RemoveListener = () => void;

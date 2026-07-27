@@ -59,6 +59,10 @@ describe('GrpcClient channel config', () => {
       privateKeyPem:
         '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----',
       hostNameOverride: 'api.example.com',
+      spkiSha256Pins: [
+        'sha256/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd=',
+        'plainPin',
+      ],
     });
 
     expect(mockGrpc.setTlsOptions).toHaveBeenCalledWith({
@@ -69,6 +73,10 @@ describe('GrpcClient channel config', () => {
       privateKeyPem:
         '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----',
       hostNameOverride: 'api.example.com',
+      spkiSha256Pins: [
+        'sha256/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd=',
+        'plainPin',
+      ],
     });
 
     GrpcClient.setTlsOptions({ hostNameOverride: 'other.example.com' });
@@ -77,6 +85,7 @@ describe('GrpcClient channel config', () => {
       certificateChainPem: null,
       privateKeyPem: null,
       hostNameOverride: 'other.example.com',
+      spkiSha256Pins: null,
     });
   });
 

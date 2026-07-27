@@ -12,7 +12,7 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 - Per-call deadline via `setCallDeadlineSeconds` (default 120s) and per-RPC `options.deadlineSeconds`
 - Client streaming via `GrpcClient.clientStreamCall`
 - Bidirectional streaming via `GrpcClient.bidiStreamCall`
-- TLS options via `GrpcClient.setTlsOptions` (custom CA, mTLS, hostname override)
+- TLS options via `GrpcClient.setTlsOptions` (custom CA, mTLS, hostname override, SPKI pins)
 - Explicit `base64-js` dependency
 
 ## Installation
@@ -39,10 +39,11 @@ GrpcClient.initGrpcChannel();
 // Custom CA and/or mTLS and/or dial-by-IP hostname override
 // (each setTlsOptions call replaces the previous TLS config)
 GrpcClient.setTlsOptions({
-  rootCertsPem: caPem, // optional
+  rootCertsPem: caPem, // optional (required on iOS when using spkiSha256Pins)
   certificateChainPem: clientCertPem, // mTLS (with privateKeyPem)
   privateKeyPem: clientKeyPem,
   hostNameOverride: 'api.example.com', // optional
+  spkiSha256Pins: ['sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='],
 });
 GrpcClient.initGrpcChannel();
 
@@ -84,8 +85,20 @@ Unary, server streaming, client streaming, and bidirectional streaming. Protobuf
 | Custom / private CA | `rootCertsPem` |
 | mTLS | `certificateChainPem` + `privateKeyPem` (both required) |
 | Dial IP, cert for DNS name | `hostNameOverride` |
+| SPKI pin (SHA-256) | `spkiSha256Pins: ['base64…']` (optional `sha256/` prefix) |
 
 PEM values are strings (load from app assets/bundle yourself). Call `setTlsOptions` before `initGrpcChannel()`.
+
+**SPKI pins:** at least one cert in the server chain must match. On **Android**, pins work with the system trust store and/or `rootCertsPem`. On **iOS** (gRPC ObjC has no handshake SPKI hook), set `rootCertsPem` to the pinned leaf/intermediate PEM as well — pins are checked against that PEM at config time, then used as trust roots.
+
+Generate a pin (OpenSSL):
+
+```sh
+openssl x509 -in leaf.pem -pubkey -noout \
+  | openssl pkey -pubin -outform DER \
+  | openssl dgst -sha256 -binary \
+  | openssl enc -base64
+```
 
 ## TODOs
 
@@ -96,7 +109,6 @@ Gaps vs a full gRPC client (not yet supported or not exposed):
 - **Retry / hedging** — no client-side retry policy
 - **Cross-platform connection events** — Android-only (`onConnectionStateChange`, `enterIdle`, …)
 - **Codegen / stubs** — raw method paths + bytes; no generated service clients
-- **Certificate pinning (SPKI/hash)** — not exposed (use custom CA / platform pinning if needed)
 
 
 ## License
