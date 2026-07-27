@@ -4,6 +4,17 @@ import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { GrpcBidiStreamingCall } from './bidi-streaming';
 import { GrpcClientStreamingCall, ServerInputStream } from './client-streaming';
 import { GrpcError } from './errors';
+import {
+  combineInterceptors,
+  GrpcInterceptor,
+  runOnError,
+  runOnHeaders,
+  runOnMessage,
+  runOnSendMessage,
+  runOnStart,
+  runOnTrailers,
+  toGrpcError,
+} from './interceptors';
 import { GrpcRequestObject, nativeGrpc } from './native';
 import {
   GrpcServerStreamingCall,
@@ -58,6 +69,8 @@ type DeferredCalls = {
   response?: Deferred<Uint8Array>;
   trailers?: Deferred<GrpcMetadata>;
   data?: ServerOutputStream;
+  method: string;
+  interceptors: GrpcInterceptor[];
 };
 
 type DeferredCallMap = {
@@ -95,36 +108,55 @@ let idCtr = 1;
 
 const deferredMap: DeferredCallMap = {};
 
+function rejectDeferredCall(deferred: DeferredCalls, error: GrpcError) {
+  deferred.headers?.reject(error);
+  deferred.trailers?.reject(error);
+  deferred.response?.reject(error);
+  deferred.data?.noitfyError(error);
+}
+
 function handleGrpcEvent(event: GrpcEvent) {
   const deferred = deferredMap[event.id];
 
   if (deferred) {
+    const { method, interceptors } = deferred;
     switch (event.type) {
       case 'headers':
-        deferred.headers?.resolve(event.payload);
+        deferred.headers?.resolve(
+          runOnHeaders(interceptors, event.payload, method)
+        );
         break;
-      case 'response':
-        const data = toByteArray(event.payload);
+      case 'response': {
+        const data = runOnMessage(
+          interceptors,
+          toByteArray(event.payload),
+          method
+        );
 
         deferred.data?.notifyData(data);
         deferred.response?.resolve(data);
         break;
+      }
       case 'trailers':
-        deferred.trailers?.resolve(event.payload);
+        deferred.trailers?.resolve(
+          runOnTrailers(interceptors, event.payload, method)
+        );
         deferred.data?.notifyComplete();
 
         delete deferredMap[event.id];
         break;
-      case 'error':
-        const error = new GrpcError(event.error, event.code, event.trailers);
+      case 'error': {
+        const error = runOnError(
+          interceptors,
+          new GrpcError(event.error, event.code, event.trailers),
+          method
+        );
 
-        deferred.headers?.reject(error);
-        deferred.trailers?.reject(error);
-        deferred.response?.reject(error);
-        deferred.data?.noitfyError(error);
+        rejectDeferredCall(deferred, error);
 
         delete deferredMap[event.id];
         break;
+      }
     }
   }
 }
@@ -182,7 +214,18 @@ export function normalizeTlsOptions(options: GrpcTlsOptions = {}): {
  * Used by the singleton {@link GrpcClient} and by {@link GrpcChannel}.
  */
 export class GrpcCallApi {
-  constructor(protected readonly channelId: string) {}
+  protected channelInterceptors: GrpcInterceptor[];
+
+  constructor(
+    protected readonly channelId: string,
+    channelInterceptors: readonly GrpcInterceptor[] = []
+  ) {
+    this.channelInterceptors = [...channelInterceptors];
+  }
+
+  protected resolveInterceptors(options?: GrpcCallOptions): GrpcInterceptor[] {
+    return combineInterceptors(this.channelInterceptors, options?.interceptors);
+  }
 
   unaryCall(
     method: string,
@@ -190,10 +233,9 @@ export class GrpcCallApi {
     requestHeaders?: GrpcMetadata,
     options?: GrpcCallOptions
   ): GrpcUnaryCall {
-    const obj = buildRequestObject(data, options);
-
     const id = getId();
     const abort = new AbortController();
+    const interceptors = this.resolveInterceptors(options);
 
     abort.signal.addEventListener('abort', () => {
       nativeGrpc().cancelGrpcCall(id);
@@ -207,15 +249,9 @@ export class GrpcCallApi {
       response,
       headers,
       trailers,
-    };
-
-    nativeGrpc().unaryCall(
-      id,
       method,
-      obj,
-      requestHeaders || {},
-      this.channelId
-    );
+      interceptors,
+    };
 
     const call = new GrpcUnaryCall(
       method,
@@ -232,6 +268,44 @@ export class GrpcCallApi {
       () => abort.abort()
     );
 
+    Promise.resolve()
+      .then(async () => {
+        let start = await runOnStart(interceptors, {
+          method,
+          headers: { ...(requestHeaders || {}) },
+          options: { ...(options || {}) },
+          request: data,
+        });
+        const callOptions = { ...start.options };
+        delete callOptions.interceptors;
+        start = {
+          ...start,
+          options: callOptions,
+        };
+        const requestBytes = await runOnSendMessage(
+          interceptors,
+          start.request ?? data,
+          start.method
+        );
+        const obj = buildRequestObject(requestBytes, start.options);
+        await nativeGrpc().unaryCall(
+          id,
+          start.method,
+          obj,
+          start.headers,
+          this.channelId
+        );
+      })
+      .catch((reason) => {
+        const deferred = deferredMap[id];
+        if (!deferred) {
+          return;
+        }
+        const error = runOnError(interceptors, toGrpcError(reason), method);
+        rejectDeferredCall(deferred, error);
+        delete deferredMap[id];
+      });
+
     return call;
   }
 
@@ -241,10 +315,9 @@ export class GrpcCallApi {
     requestHeaders?: GrpcMetadata,
     options?: GrpcCallOptions
   ): GrpcServerStreamingCall {
-    const obj = buildRequestObject(data, options);
-
     const id = getId();
     const abort = new AbortController();
+    const interceptors = this.resolveInterceptors(options);
 
     abort.signal.addEventListener('abort', () => {
       nativeGrpc().cancelGrpcCall(id);
@@ -259,15 +332,9 @@ export class GrpcCallApi {
       headers,
       trailers,
       data: stream,
-    };
-
-    nativeGrpc().serverStreamingCall(
-      id,
       method,
-      obj,
-      requestHeaders || {},
-      this.channelId
-    );
+      interceptors,
+    };
 
     const call = new GrpcServerStreamingCall(
       method,
@@ -284,6 +351,44 @@ export class GrpcCallApi {
       () => abort.abort()
     );
 
+    Promise.resolve()
+      .then(async () => {
+        let start = await runOnStart(interceptors, {
+          method,
+          headers: { ...(requestHeaders || {}) },
+          options: { ...(options || {}) },
+          request: data,
+        });
+        const callOptions = { ...start.options };
+        delete callOptions.interceptors;
+        start = {
+          ...start,
+          options: callOptions,
+        };
+        const requestBytes = await runOnSendMessage(
+          interceptors,
+          start.request ?? data,
+          start.method
+        );
+        const obj = buildRequestObject(requestBytes, start.options);
+        await nativeGrpc().serverStreamingCall(
+          id,
+          start.method,
+          obj,
+          start.headers,
+          this.channelId
+        );
+      })
+      .catch((reason) => {
+        const deferred = deferredMap[id];
+        if (!deferred) {
+          return;
+        }
+        const error = runOnError(interceptors, toGrpcError(reason), method);
+        rejectDeferredCall(deferred, error);
+        delete deferredMap[id];
+      });
+
     return call;
   }
 
@@ -298,8 +403,11 @@ export class GrpcCallApi {
   ): GrpcClientStreamingCall {
     const id = getId();
     const abort = new AbortController();
-    const headersMeta = requestHeaders || {};
+    const interceptors = this.resolveInterceptors(options);
+    let headersMeta = { ...(requestHeaders || {}) };
+    let callOptions: GrpcCallOptions = { ...(options || {}) };
     const channelId = this.channelId;
+    let started = false;
 
     abort.signal.addEventListener('abort', () => {
       nativeGrpc().cancelGrpcCall(id);
@@ -313,18 +421,47 @@ export class GrpcCallApi {
       response,
       headers,
       trailers,
+      method,
+      interceptors,
     };
 
     const requests = new ServerInputStream(
-      (data, isFirst) => {
-        const obj = buildRequestObject(data, isFirst ? options : undefined);
-        return nativeGrpc().clientStreamingCall(
-          id,
-          method,
-          obj,
-          isFirst ? headersMeta : {},
-          channelId
-        );
+      async (data, isFirst) => {
+        try {
+          let message = await runOnSendMessage(interceptors, data, method);
+          if (isFirst || !started) {
+            const start = await runOnStart(interceptors, {
+              method,
+              headers: headersMeta,
+              options: callOptions,
+              request: message,
+            });
+            headersMeta = start.headers;
+            callOptions = { ...start.options };
+            delete callOptions.interceptors;
+            message = start.request ?? message;
+            started = true;
+          }
+          const obj = buildRequestObject(
+            message,
+            isFirst ? callOptions : undefined
+          );
+          return nativeGrpc().clientStreamingCall(
+            id,
+            method,
+            obj,
+            isFirst ? headersMeta : {},
+            channelId
+          );
+        } catch (reason) {
+          const deferred = deferredMap[id];
+          if (deferred) {
+            const error = runOnError(interceptors, toGrpcError(reason), method);
+            rejectDeferredCall(deferred, error);
+            delete deferredMap[id];
+          }
+          throw toGrpcError(reason);
+        }
       },
       () => nativeGrpc().finishClientStreaming(id)
     );
@@ -359,8 +496,11 @@ export class GrpcCallApi {
   ): GrpcBidiStreamingCall {
     const id = getId();
     const abort = new AbortController();
-    const headersMeta = requestHeaders || {};
+    const interceptors = this.resolveInterceptors(options);
+    let headersMeta = { ...(requestHeaders || {}) };
+    let callOptions: GrpcCallOptions = { ...(options || {}) };
     const channelId = this.channelId;
+    let started = false;
 
     abort.signal.addEventListener('abort', () => {
       nativeGrpc().cancelGrpcCall(id);
@@ -374,18 +514,47 @@ export class GrpcCallApi {
       headers,
       trailers,
       data: stream,
+      method,
+      interceptors,
     };
 
     const requests = new ServerInputStream(
-      (data, isFirst) => {
-        const obj = buildRequestObject(data, isFirst ? options : undefined);
-        return nativeGrpc().bidiStreamingCall(
-          id,
-          method,
-          obj,
-          isFirst ? headersMeta : {},
-          channelId
-        );
+      async (data, isFirst) => {
+        try {
+          let message = await runOnSendMessage(interceptors, data, method);
+          if (isFirst || !started) {
+            const start = await runOnStart(interceptors, {
+              method,
+              headers: headersMeta,
+              options: callOptions,
+              request: message,
+            });
+            headersMeta = start.headers;
+            callOptions = { ...start.options };
+            delete callOptions.interceptors;
+            message = start.request ?? message;
+            started = true;
+          }
+          const obj = buildRequestObject(
+            message,
+            isFirst ? callOptions : undefined
+          );
+          return nativeGrpc().bidiStreamingCall(
+            id,
+            method,
+            obj,
+            isFirst ? headersMeta : {},
+            channelId
+          );
+        } catch (reason) {
+          const deferred = deferredMap[id];
+          if (deferred) {
+            const error = runOnError(interceptors, toGrpcError(reason), method);
+            rejectDeferredCall(deferred, error);
+            delete deferredMap[id];
+          }
+          throw toGrpcError(reason);
+        }
       },
       () => nativeGrpc().finishClientStreaming(id)
     );
@@ -411,11 +580,18 @@ export class GrpcCallApi {
 
 export class GrpcClient extends GrpcCallApi {
   constructor() {
-    super(DEFAULT_CHANNEL_ID);
+    super(DEFAULT_CHANNEL_ID, []);
     Emitter.addListener('grpc-call', handleGrpcEvent);
   }
   destroy() {
     Emitter.removeAllListeners('grpc-call');
+  }
+  /**
+   * Replace default-channel interceptors (same replace semantics as `setTlsOptions`).
+   * Prefer `createChannel({ interceptors })` for multi-host apps.
+   */
+  setInterceptors(interceptors: GrpcInterceptor[] = []): void {
+    this.channelInterceptors = [...interceptors];
   }
   getHost(): Promise<string> {
     return nativeGrpc().getHost();
