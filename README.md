@@ -5,15 +5,13 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 
 ## Changes vs upstream
 
-- Removed deprecated `jcenter()` (required for modern AGP / RN 0.86+)
+- Builds and runs with React Native New Architecture (Native Module interop)
 - Android `namespace 'com.reactnativegrpc'` (no `package` in AndroidManifest)
 - `minSdkVersion` 24
-- Builds and runs with React Native New Architecture (Native Module interop)
 - Per-call deadline via `setCallDeadlineSeconds` (default 120s) and per-RPC `options.deadlineSeconds`
 - Client streaming via `GrpcClient.clientStreamCall`
 - Bidirectional streaming via `GrpcClient.bidiStreamCall`
 - TLS options via `GrpcClient.setTlsOptions` (custom CA, mTLS, hostname override, SPKI pins)
-- Explicit `base64-js` dependency
 
 ## Installation
 
@@ -89,7 +87,7 @@ Unary, server streaming, client streaming, and bidirectional streaming. Protobuf
 
 PEM values are strings (load from app assets/bundle yourself). Call `setTlsOptions` before `initGrpcChannel()`.
 
-**SPKI pins:** at least one cert in the server chain must match. On **Android**, pins work with the system trust store and/or `rootCertsPem`. On **iOS** (gRPC ObjC has no handshake SPKI hook), set `rootCertsPem` to the pinned leaf/intermediate PEM as well — pins are checked against that PEM at config time, then used as trust roots.
+**SPKI pins:** at least one cert in the server chain must match. On **Android**, pins work with the system trust store and/or `rootCertsPem`. On **iOS** (gRPC ObjC has no handshake SPKI hook), set `rootCertsPem` to the pinned leaf/intermediate PEM as well. Pins are checked against that PEM at config time, then used as trust roots.
 
 Generate a pin (OpenSSL):
 
@@ -104,11 +102,11 @@ openssl x509 -in leaf.pem -pubkey -noout \
 
 Gaps vs a full gRPC client (not yet supported or not exposed):
 
-- **Multiple channels / hosts** — single global host; no concurrent channels
-- **Interceptors** — no request/response middleware
-- **Retry / hedging** — no client-side retry policy
-- **Cross-platform connection events** — Android-only (`onConnectionStateChange`, `enterIdle`, …)
-- **Codegen / stubs** — raw method paths + bytes; no generated service clients
+- **Multiple channels / hosts**: single global host; no concurrent channels
+- **Interceptors**: no request/response middleware
+- **Retry / hedging**: no client-side retry policy
+- **Cross-platform connection events**: Android-only (`onConnectionStateChange`, `enterIdle`, …)
+- **Codegen / stubs**: raw method paths + bytes; no generated service clients
 
 
 ## License
