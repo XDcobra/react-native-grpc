@@ -1,6 +1,7 @@
 import { AbortController, AbortSignal } from 'abort-controller';
 import { fromByteArray, toByteArray } from 'base64-js';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { GrpcClientStreamingCall, ServerInputStream } from './client-streaming';
 import { GrpcError } from './errors';
 import {
   GrpcServerStreamingCall,
@@ -331,6 +332,64 @@ export class GrpcClient {
       requestHeaders || {},
       headers.promise,
       stream,
+      trailers.promise,
+      abort
+    );
+
+    call.then(
+      (result) => result,
+      () => abort.abort()
+    );
+
+    return call;
+  }
+
+  /**
+   * Client-streaming RPC: many request messages, one response.
+   * Native call starts on the first `requests.send(...)`.
+   */
+  clientStreamCall(
+    method: string,
+    requestHeaders?: GrpcMetadata,
+    options?: GrpcCallOptions
+  ): GrpcClientStreamingCall {
+    const id = getId();
+    const abort = new AbortController();
+    const headersMeta = requestHeaders || {};
+
+    abort.signal.addEventListener('abort', () => {
+      nativeGrpc().cancelGrpcCall(id);
+    });
+
+    const response = createDeferred<Uint8Array>(abort.signal);
+    const headers = createDeferred<GrpcMetadata>(abort.signal);
+    const trailers = createDeferred<GrpcMetadata>(abort.signal);
+
+    deferredMap[id] = {
+      response,
+      headers,
+      trailers,
+    };
+
+    const requests = new ServerInputStream(
+      (data, isFirst) => {
+        const obj = buildRequestObject(data, isFirst ? options : undefined);
+        return nativeGrpc().clientStreamingCall(
+          id,
+          method,
+          obj,
+          isFirst ? headersMeta : {}
+        );
+      },
+      () => nativeGrpc().finishClientStreaming(id)
+    );
+
+    const call = new GrpcClientStreamingCall(
+      method,
+      headersMeta,
+      requests,
+      headers.promise,
+      response.promise,
       trailers.promise,
       abort
     );
