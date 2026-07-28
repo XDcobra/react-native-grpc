@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.9] - 2026-07-28
+
+### Changed
+
+- Releases now go through staged npm Trusted Publishing (OIDC): CI stages the version tokenlessly with provenance, and a maintainer promotes it to live on npmjs.com with 2FA/passkey. No library or API changes since 1.1.0 (versions 1.1.1–1.1.8 were internal release-pipeline iterations).
+
 ## [1.1.0] - 2026-07-28
 
 ### Added

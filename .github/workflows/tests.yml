@@ -1,13 +1,14 @@
-name: CI
+name: Tests
 
 on:
   pull_request:
   push:
     branches:
       - main
+  workflow_call:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

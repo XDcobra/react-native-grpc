@@ -1,60 +1,71 @@
 name: Publish
 
+# npm Trusted Publishing (OIDC), staged — https://docs.npmjs.com/trusted-publishers
+# No NPM_TOKEN: GitHub mints a short-lived OIDC token, npm exchanges it for the
+# trusted publisher (XDcobra/react-native-grpc + publish.yml, Allowed action:
+# "npm stage publish"). CI only STAGES the version (with provenance); it never
+# goes live. A maintainer promotes the staged version to live on npmjs.com with
+# 2FA/passkey. Requires the trusted publisher's Allowed actions to include
+# "npm stage publish".
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  id-token: write
-  contents: write
+  contents: read
+  id-token: write # required: mint the OIDC token for trusted publishing
 
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  test:
+    name: Tests
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
   publish:
     name: Publish to npm
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      id-token: write
+      contents: write # GitHub Release only
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # No registry-url: it writes an .npmrc expecting ${NODE_AUTH_TOKEN}; with
+      # no token that shadows OIDC. Omitting it lets npm use OIDC on the default
+      # registry. (Yarn is only used to install; publish is done by npm.)
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
 
       - name: Enable Corepack (Yarn)
         run: corepack enable
 
-      - name: Install latest npm (OIDC trusted publishing)
-        run: npm install -g npm@latest
+      # Staged trusted publishing requires npm >= 11.15.0
+      - name: Install npm for trusted publishing
+        run: npm install -g npm@11.16.0
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Lint
-        run: yarn lint
-
-      - name: Typecheck
-        run: yarn typescript
-
-      - name: Test
-        run: yarn test --ci --coverage=false
-
-      - name: Build
-        run: yarn build
-
-      - name: Publish to npm
-        run: npm publish --access public
-        # No NODE_AUTH_TOKEN / NPM_TOKEN — OIDC Trusted Publishing
+      # Stages the version via OIDC (provenance automatic on public repos). It is
+      # NOT live until a maintainer approves it on npmjs.com with 2FA/passkey.
+      - name: Stage publish to npm
+        run: npm stage publish
 
       - name: Create GitHub Release
+        if: success()
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
