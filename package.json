@@ -1,6 +1,6 @@
 {
   "name": "@xdcobra/react-native-grpc",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "gRPC for react-native (fork of @krishnafkh/react-native-grpc / Mitch528)",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
