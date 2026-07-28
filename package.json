@@ -70,7 +70,8 @@
   "homepage": "https://github.com/XDcobra/react-native-grpc#readme",
   "publishConfig": {
     "access": "public",
-    "registry": "https://registry.npmjs.org/"
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
   },
   "packageManager": "yarn@1.22.22",
   "engines": {
@@ -138,13 +139,14 @@
     "git": {
       "commitMessage": "chore: release ${version}",
       "tagName": "v${version}",
-      "allowEmptyCommit": true
+      "allowEmptyCommit": true,
+      "push": true
     },
     "npm": {
-      "publish": true
+      "publish": false
     },
     "github": {
-      "release": true
+      "release": false
     },
     "plugins": {
       "@release-it/keep-a-changelog": {
