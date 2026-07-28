@@ -7,6 +7,8 @@ name: Publish
 # goes live. A maintainer promotes the staged version to live on npmjs.com with
 # 2FA/passkey. Requires the trusted publisher's Allowed actions to include
 # "npm stage publish".
+
+# CAUTION: Currently not working due to a bug in npm https://github.com/npm/cli/issues/9268
 on:
   push:
     tags:
