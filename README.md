@@ -1,5 +1,9 @@
 # @xdcobra/react-native-grpc
 
+[![npm version](https://img.shields.io/npm/v/@xdcobra/react-native-grpc.svg)](https://www.npmjs.com/package/@xdcobra/react-native-grpc)
+[![Android](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
+[![iOS](https://img.shields.io/badge/platform-iOS-000000?logo=apple&logoColor=white)](https://developer.apple.com/ios)
+
 Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-native-grpc)
 (itself based on [Mitch528/react-native-grpc](https://github.com/Mitch528/react-native-grpc)).
 
