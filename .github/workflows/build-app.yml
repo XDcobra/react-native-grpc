@@ -62,7 +62,7 @@ jobs:
     # Named runner images instead of macos-latest: each React Native version is built with an
     # Xcode generation it supports, and moving to a new Xcode is a deliberate change here.
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 360 # GitHub-hosted maximum; compiling gRPC-Core and React Native takes long
     # The macos-latest entry is an early warning only: it must not block PRs or publishing.
     continue-on-error: ${{ matrix.experimental == true }}
     strategy:
