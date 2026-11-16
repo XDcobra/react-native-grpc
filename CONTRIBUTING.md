@@ -37,6 +37,9 @@ yarn typescript
 yarn lint
 ```
 
+Native code (Android/iOS) is not covered by lint, typecheck or Jest. CI builds the packed library in a
+fresh React Native app instead; see [test/README.md](test/README.md) to run the same steps locally.
+
 To fix formatting errors, run the following:
 
 ```sh

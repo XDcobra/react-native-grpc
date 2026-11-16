@@ -29,9 +29,15 @@ jobs:
     permissions:
       contents: read
 
+  build-app:
+    name: Build app
+    uses: ./.github/workflows/build-app.yml
+    permissions:
+      contents: read
+
   publish:
     name: Publish to npm
-    needs: test
+    needs: [test, build-app]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

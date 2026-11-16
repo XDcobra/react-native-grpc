@@ -3,7 +3,9 @@
 # Runs on macOS only (compiles the Objective-C file with clang; the Security.framework
 # calls it uses behave the same on macOS and iOS).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$HERE/../../../.."
+cd "$ROOT"
 OPENSSL=${OPENSSL:-$(command -v openssl)}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -27,20 +29,6 @@ ec256 ec:prime256v1
 ec384 ec:secp384r1
 LIST
 
-cat > "$WORK/check.m" <<'OBJC'
-#import <Foundation/Foundation.h>
-#import "SpkiPinning.h"
-int main(int argc, char **argv) {
-  @autoreleasepool {
-    for (NSString *n in @[@"rsa2048", @"rsa3072", @"rsa4096", @"ec256", @"ec384"]) {
-      NSString *path = [NSString stringWithFormat:@"%s/%@.der", argv[1], n];
-      NSString *pin = SpkiSha256Base64FromCertificateData([NSData dataWithContentsOfFile:path]);
-      printf("%s %s\n", n.UTF8String, pin ? pin.UTF8String : "nil");
-    }
-  }
-  return 0;
-}
-OBJC
-clang -fobjc-arc -Iios "$WORK/check.m" ios/SpkiPinning.m -framework Foundation -framework Security -o "$WORK/check"
+clang -fobjc-arc -Iios "$HERE/check.m" ios/SpkiPinning.m -framework Foundation -framework Security -o "$WORK/check"
 "$WORK/check" "$WORK" > "$WORK/actual.txt"
 if diff "$WORK/expected.txt" "$WORK/actual.txt"; then echo "OK: all SPKI pins match OpenSSL"; else echo "FAIL"; exit 1; fi
