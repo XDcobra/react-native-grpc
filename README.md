@@ -21,6 +21,20 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 - Unary retry / hedging via `createChannel({ retry | hedging })` / `GrpcClient.setRetryPolicy` / `setHedgingPolicy` ([gRFC A6](https://github.com/grpc/proposal/blob/master/A6-client-retries.md)-style)
 - Typed clients via Protobuf-ES `createClient` (Buf + `protoc-gen-es`)
 
+## Compatibility
+
+| | Minimum |
+|---|---|
+| React Native | 0.76 |
+| iOS | 15.1 (the minimum of React Native 0.76+) |
+| Android `minSdkVersion` | 24 |
+
+The native modules are classic bridge modules and run under the New Architecture through React Native's interop layer.
+
+**iOS gRPC pod:** `gRPC` is limited to `>= 1.84.1, < 1.85.0`. `gRPC-Core 1.85.0` pulls `abseil 1.20260526.0`, whose CocoaPods spec compiles the Windows-only `time_zone_name_win.cc` and fails with `'windows.h' file not found`. The limit will be lifted once this is fixed upstream.
+
+**Xcode 27:** its supported deployment target range starts at iOS 15, but the `abseil` pod still declares iOS 12.0, so building any app that uses the `gRPC` pod fails in `abseil-xcprivacy`. This comes from the `abseil` pod, not from this package.
+
 ## Installation
 
 ```sh

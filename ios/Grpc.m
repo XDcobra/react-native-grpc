@@ -198,12 +198,14 @@ static NSString * const kGrpcDefaultChannelId = @"default";
 }
 
 RCT_EXPORT_METHOD(getHost:
-    (RCTPromiseResolveBlock) resolve) {
+    (RCTPromiseResolveBlock) resolve
+    rejecter:(RCTPromiseRejectBlock) reject) {
     resolve(self.grpcHost);
 }
 
 RCT_EXPORT_METHOD(getIsInsecure:
-    (RCTPromiseResolveBlock) resolve) {
+    (RCTPromiseResolveBlock) resolve
+    rejecter:(RCTPromiseRejectBlock) reject) {
     resolve([NSNumber numberWithBool:self.grpcInsecure]);
 }
 

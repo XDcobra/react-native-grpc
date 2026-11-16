@@ -1,0 +1,117 @@
+name: Build app
+
+# Builds the packed library inside a fresh React Native app, so native (Android/iOS)
+# breakage is caught. Lint/typecheck/Jest in tests.yml cannot see native code.
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'ios/**'
+      - 'src/**'
+      - 'test/**'
+      - 'react-native-grpc.podspec'
+      - 'package.json'
+      - '.github/workflows/build-app.yml'
+  push:
+    branches:
+      - main
+  workflow_call:
+
+concurrency:
+  group: build-app-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android build (RN ${{ matrix.rn }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        rn: ['0.76.9', 'latest'] # minimum supported and newest, see README "Compatibility"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: yarn
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Enable Corepack (Yarn)
+        run: corepack enable
+
+      - name: Create dummy app with the packed library
+        run: test/app/create-dummy-app.sh "$RUNNER_TEMP/app" "${{ matrix.rn }}"
+
+      - name: Build debug APK
+        working-directory: ${{ runner.temp }}/app/GrpcDummy/android
+        run: ./gradlew assembleDebug --no-daemon
+
+  ios:
+    name: iOS build (RN ${{ matrix.rn }}, ${{ matrix.os }})
+    # Named runner images instead of macos-latest: each React Native version is built with an
+    # Xcode generation it supports, and moving to a new Xcode is a deliberate change here.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360 # GitHub-hosted maximum; compiling gRPC-Core and React Native takes long
+    # The macos-latest entry is an early warning only: it must not block PRs or publishing.
+    continue-on-error: ${{ matrix.experimental == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rn: '0.76.9' # minimum supported, see README "Compatibility"
+            os: macos-15 # Xcode 16.4
+          - rn: 'latest'
+            os: macos-26 # Xcode 26.6
+          - rn: 'latest'
+            os: macos-latest # early warning when GitHub moves to a new Xcode
+            experimental: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: yarn
+
+      - name: Enable Corepack (Yarn)
+        run: corepack enable
+
+      # The Gemfiles of React Native templates target Ruby < 3.4 (nkf, mutex_m, ... left the default gems).
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Create dummy app with the packed library
+        run: test/app/create-dummy-app.sh "$RUNNER_TEMP/app" "${{ matrix.rn }}"
+
+      - name: Install pods
+        working-directory: ${{ runner.temp }}/app/GrpcDummy/ios
+        run: |
+          bundle install
+          bundle exec pod install
+
+      - name: Build for the iOS simulator
+        working-directory: ${{ runner.temp }}/app/GrpcDummy/ios
+        run: |
+          xcodebuild -workspace GrpcDummy.xcworkspace -scheme GrpcDummy \
+            -sdk iphonesimulator -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO build
+
+  spki-pin:
+    name: SPKI pin check (iOS)
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: test/native/ios/spki-pin/run.sh
