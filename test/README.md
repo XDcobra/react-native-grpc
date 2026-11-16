@@ -14,7 +14,13 @@ a broken iOS or Android integration.
 
 `test/app/create-dummy-app.sh <out-dir> [rn-version]` packs the library (`npm pack`, so the `files`
 field of `package.json` is tested), creates a fresh React Native app with the community CLI,
-installs the tarball, copies `test/app/App.tsx` into it and bundles the JS for both platforms.
+installs the tarball, copies `test/app/App.tsx` into it, typechecks it and bundles the JS for both platforms.
+
+The typecheck runs `tsc --noEmit` three times, so a wrong `types` path or a type error in `src/` fails CI:
+
+- with the app's own `tsconfig.json` (the `react-native` export condition, i.e. the shipped `src/*.ts`),
+- without custom conditions (the `types` export condition, i.e. `lib/typescript/*.d.ts`, root and `create-client` subpath),
+- with `moduleResolution: node10` (the top-level `types` field; `exports` is ignored there).
 
 Then build natively:
 

@@ -31,6 +31,8 @@ Fork of [`@krishnafkh/react-native-grpc`](https://github.com/krishnafkh/react-na
 
 The native modules are classic bridge modules and run under the New Architecture through React Native's interop layer.
 
+No Metro or `tsconfig` changes are needed. The library uses React Native's global `AbortController` and ships its type declarations at `lib/typescript/` (fixed after 2.0.0, which published them under `lib/typescript/src/` and required `abort-controller` with a Metro resolver override).
+
 **iOS gRPC pod:** `gRPC` is limited to `>= 1.84.1, < 1.85.0`. `gRPC-Core 1.85.0` pulls `abseil 1.20260526.0`, whose CocoaPods spec compiles the Windows-only `time_zone_name_win.cc` and fails with `'windows.h' file not found`. The limit will be lifted once this is fixed upstream.
 
 **Xcode 27:** its supported deployment target range starts at iOS 15, but the `abseil` pod still declares iOS 12.0, so building any app that uses the `gRPC` pod fails in `abseil-xcprivacy`. This comes from the `abseil` pod, not from this package.
@@ -142,7 +144,7 @@ const res = await client.sendExampleMessage(
 
 Path form: `/${service.typeName}/${MethodName}` (protobuf RPC name). Raw `unaryCall` / stream APIs remain for BYO bytes.
 
-Subpath import (optional): `import { createClient } from '@xdcobra/react-native-grpc/create-client'`.
+Subpath import (optional): `import { createClient } from '@xdcobra/react-native-grpc/create-client'`. It relies on package `exports`, which Metro enables by default only from React Native 0.79; on older versions import from the package root.
 
 ### Multiple channels / hosts
 

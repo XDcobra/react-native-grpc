@@ -2,6 +2,7 @@
   "extends": "./tsconfig",
   "exclude": [
     "example",
+    "test",
     "**/__tests__/**",
     "**/__mocks__/**",
     "**/__fixtures__/**"

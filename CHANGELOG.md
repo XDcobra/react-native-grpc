@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Type declarations are emitted to `lib/typescript/` again, where `types` and `exports[*].types` point. In 2.0.0 the new `test/` folder was part of the declaration build, so they ended up in `lib/typescript/src/` and TypeScript consumers found no types. `tsconfig.build.json` now excludes `test`.
+- The library uses React Native's global `AbortController` / `AbortSignal` instead of the `abort-controller` package. Metro resolved that package's `browser` entry, which has no named `AbortController` export, so apps needed a resolver override in `metro.config.js`. The `abort-controller` dependency is removed.
+- `src/client.ts` typechecks against the event emitter types of current React Native (0.88), which matters for apps whose `tsconfig` resolves the `react-native` export condition (the React Native template does).
+
+### Added
+
+- CI: the dummy app in `build-app.yml` typechecks `test/app/App.tsx` against the packed library (React Native template config, `types` export condition, and node10 resolution), covering the root entry and the `create-client` subpath.
+- Jest runs in a Node environment that exposes Node's `AbortController` / `AbortSignal` (`jest/node-environment.js`), as React Native does at runtime.
+
 ## [2.0.0] - 2026-11-16
 
 ### Changed

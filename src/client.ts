@@ -1,4 +1,3 @@
-import { AbortController, AbortSignal } from 'abort-controller';
 import { fromByteArray, toByteArray } from 'base64-js';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { GrpcBidiStreamingCall } from './bidi-streaming';
@@ -940,7 +939,9 @@ export class GrpcCallApi {
 export class GrpcClient extends GrpcCallApi {
   constructor() {
     super(DEFAULT_CHANNEL_ID, [], 120, null, null);
-    Emitter.addListener('grpc-call', handleGrpcEvent);
+    Emitter.addListener('grpc-call', (event) =>
+      handleGrpcEvent(event as GrpcEvent)
+    );
   }
   destroy() {
     Emitter.removeAllListeners('grpc-call');

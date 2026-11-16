@@ -110,6 +110,7 @@
   },
   "jest": {
     "preset": "react-native",
+    "testEnvironment": "<rootDir>/jest/node-environment.js",
     "testMatch": [
       "**/__tests__/**/*.(test|spec).[jt]s?(x)"
     ],
@@ -202,7 +203,6 @@
     ]
   },
   "dependencies": {
-    "abort-controller": "^3.0.0",
     "base64-js": "^1.5.1",
     "eventemitter3": "^4.0.7"
   }
