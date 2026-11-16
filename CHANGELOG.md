@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- iOS: `SpkiPinning.m` no longer uses `SecItemExport` / `kSecFormatOpenSSL`, which exist on macOS only and broke the iOS build. The SPKI pin is now computed from `SecKeyCopyExternalRepresentation` plus the fixed SubjectPublicKeyInfo header (RSA 2048/3072/4096, EC P-256/P-384). Other key types never match a pin. Verified against OpenSSL with `scripts/verify-spki-pin.sh`.
+- iOS (New Architecture): `getHost` and `getIsInsecure` now declare the reject block that TurboModule promise methods require; without it the module failed to load on React Native 0.88.
+
 ## [1.1.9] - 2026-07-28
 
 ### Changed
