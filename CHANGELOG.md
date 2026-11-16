@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking:** minimum supported versions are now React Native 0.76 (`peerDependencies` `react-native >=0.76.0`, `react >=18.3.1`) and iOS 15.1 (was 10.0 in the podspec). iOS 15.1 is the minimum of React Native 0.76+ and fits current Xcode.
+- Example app upgraded from React Native 0.70.6 to 0.88.1 (native projects regenerated from the current template). It autolinks the library from the repository root and is a development playground only; CI builds a fresh app instead (see `test/README.md`).
 - iOS: `gRPC` is limited to `>= 1.84.1, < 1.85.0`. `gRPC-Core 1.85.0` pulls `abseil 1.20260526.0`, whose CocoaPods spec compiles the Windows-only `time_zone_name_win.cc` (`'windows.h' file not found`). To be lifted once fixed upstream.
 
 ### Fixed
