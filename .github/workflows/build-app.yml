@@ -2,6 +2,10 @@ name: Build app
 
 # Builds the packed library inside a fresh React Native app, so native (Android/iOS)
 # breakage is caught. Lint/typecheck/Jest in tests.yml cannot see native code.
+#
+# Runs on pull requests (gate for merging) and from publish.yml (gate for npm, on the exact
+# release commit). Not on push to main: those commits were already built in their PR, and a
+# release pushes commit and tag together, which would otherwise build the same commit twice.
 
 on:
   pull_request:
@@ -13,9 +17,6 @@ on:
       - 'react-native-grpc.podspec'
       - 'package.json'
       - '.github/workflows/build-app.yml'
-  push:
-    branches:
-      - main
   workflow_call:
 
 concurrency:
