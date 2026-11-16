@@ -8,7 +8,7 @@ name: Publish
 # 2FA/passkey. Requires the trusted publisher's Allowed actions to include
 # "npm stage publish".
 
-# CAUTION: Currently not working due to a bug in npm https://github.com/npm/cli/issues/9268
+# Verified working with v2.0.0 (staged, then approved on npmjs.com).
 on:
   push:
     tags:
