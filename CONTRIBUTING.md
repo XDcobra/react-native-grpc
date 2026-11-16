@@ -10,7 +10,14 @@ To get started with the project, run `yarn` in the root directory to install the
 yarn
 ```
 
-While developing, you can run the [example app](/example/) to test your changes.
+While developing, you can run the [example app](/example/) to test your changes. It uses the newest React Native, links the library from the repository root (`example/react-native.config.js`, `example/metro.config.js`) and is meant as a playground; CI does not use it.
+
+First install its dependencies and, for iOS, the pods:
+
+```sh
+yarn example
+yarn pods
+```
 
 To start the packager:
 

@@ -28,6 +28,9 @@ xcodebuild -workspace GrpcDummy.xcworkspace -scheme GrpcDummy -sdk iphonesimulat
 cd <out-dir>/GrpcDummy/android && ./gradlew assembleDebug
 ```
 
+The [example app](../example/) is a development playground with the newest React Native. CI does not
+use it: it links the library source from the repository root and only covers one React Native version.
+
 ## Not covered
 
 - Loading the native module at runtime (a build does not start the app).

@@ -1,6 +1,6 @@
 {
   "name": "react-native-grpc-example",
-  "description": "Example app for react-native-grpc",
+  "description": "Example app for @xdcobra/react-native-grpc (development playground, not used by CI)",
   "version": "0.0.1",
   "private": true,
   "scripts": {
@@ -11,17 +11,27 @@
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.13.0",
-    "react": "18.2.0",
-    "react-native": "0.70.6",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
     "text-encoding": "^0.7.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.20.5",
-    "@babel/runtime": "^7.20.6",
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/runtime": "^7.25.0",
     "@bufbuild/buf": "^1.72.0",
     "@bufbuild/protoc-gen-es": "^2.13.0",
-    "babel-plugin-module-resolver": "^4.1.0",
-    "metro": "^0.73.4",
-    "metro-react-native-babel-preset": "^0.73.4"
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-community/cli-platform-android": "20.2.0",
+    "@react-native-community/cli-platform-ios": "20.2.0",
+    "@react-native/babel-preset": "0.88.1",
+    "@react-native/metro-config": "0.88.1",
+    "@react-native/typescript-config": "0.88.1",
+    "@types/react": "^19.2.0",
+    "babel-plugin-module-resolver": "^5.0.2",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">= 22.11.0"
   }
 }
