@@ -63,6 +63,8 @@ jobs:
     # Xcode generation it supports, and moving to a new Xcode is a deliberate change here.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # The macos-latest entry is an early warning only: it must not block PRs or publishing.
+    continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -71,6 +73,9 @@ jobs:
             os: macos-15 # Xcode 16.4
           - rn: 'latest'
             os: macos-26 # Xcode 26.6
+          - rn: 'latest'
+            os: macos-latest # early warning when GitHub moves to a new Xcode
+            experimental: true
     steps:
       - uses: actions/checkout@v7
 
