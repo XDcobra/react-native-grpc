@@ -58,13 +58,19 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
 
   ios:
-    name: iOS build (RN ${{ matrix.rn }})
-    runs-on: macos-latest
+    name: iOS build (RN ${{ matrix.rn }}, ${{ matrix.os }})
+    # Named runner images instead of macos-latest: each React Native version is built with an
+    # Xcode generation it supports, and moving to a new Xcode is a deliberate change here.
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        rn: ['0.76.9', 'latest']
+        include:
+          - rn: '0.76.9' # minimum supported, see README "Compatibility"
+            os: macos-15 # Xcode 16.4
+          - rn: 'latest'
+            os: macos-26 # Xcode 26.6
     steps:
       - uses: actions/checkout@v7
 
@@ -99,7 +105,7 @@ jobs:
 
   spki-pin:
     name: SPKI pin check (iOS)
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
