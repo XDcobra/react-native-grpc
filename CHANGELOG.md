@@ -7,10 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** minimum supported versions are now React Native 0.76 (`peerDependencies` `react-native >=0.76.0`, `react >=18.3.1`) and iOS 15.1 (was 10.0 in the podspec). iOS 15.1 is the minimum of React Native 0.76+ and fits current Xcode.
+- iOS: `gRPC` is limited to `>= 1.84.1, < 1.85.0`. `gRPC-Core 1.85.0` pulls `abseil 1.20260526.0`, whose CocoaPods spec compiles the Windows-only `time_zone_name_win.cc` (`'windows.h' file not found`). To be lifted once fixed upstream.
+
 ### Fixed
 
-- iOS: `SpkiPinning.m` no longer uses `SecItemExport` / `kSecFormatOpenSSL`, which exist on macOS only and broke the iOS build. The SPKI pin is now computed from `SecKeyCopyExternalRepresentation` plus the fixed SubjectPublicKeyInfo header (RSA 2048/3072/4096, EC P-256/P-384). Other key types never match a pin. Verified against OpenSSL with `scripts/verify-spki-pin.sh`.
+- iOS: `SpkiPinning.m` no longer uses `SecItemExport` / `kSecFormatOpenSSL`, which exist on macOS only and broke the iOS build. The SPKI pin is now computed from `SecKeyCopyExternalRepresentation` plus the fixed SubjectPublicKeyInfo header (RSA 2048/3072/4096, EC P-256/P-384). Other key types never match a pin. Verified against OpenSSL with `test/native/ios/spki-pin/run.sh`.
 - iOS (New Architecture): `getHost` and `getIsInsecure` now declare the reject block that TurboModule promise methods require; without it the module failed to load on React Native 0.88.
+
+### Added
+
+- CI: `build-app.yml` builds the packed library inside a fresh React Native app on Android (ubuntu) and iOS (macOS); native SPKI pin test moved to `test/native/ios/spki-pin/` (`scripts/` removed).
 
 ## [1.1.9] - 2026-07-28
 
