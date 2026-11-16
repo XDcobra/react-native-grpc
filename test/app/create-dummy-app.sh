@@ -33,6 +33,42 @@ npm install --no-audit --no-fund
 npm install --no-audit --no-fund "$TARBALL" @bufbuild/protobuf
 cp "$ROOT/test/app/App.tsx" App.tsx
 
+echo "==> Typechecking App.tsx against the packed library"
+# The template's tsconfig resolves the "react-native" export condition (src/*.ts). Consumers
+# without it read the published declarations instead, so check those too:
+#   - "types" export condition (moduleResolution bundler/node16 without "react-native")
+#   - top-level "types" field (moduleResolution node10, which ignores "exports")
+npx tsc --noEmit
+cat > tsconfig.grpc-exports.json <<'JSON'
+{ "extends": "./tsconfig.json", "compilerOptions": { "customConditions": [] } }
+JSON
+npx tsc --noEmit -p tsconfig.grpc-exports.json
+cat > grpc-node10.ts <<'TS'
+import { GrpcClient, createClient } from '@xdcobra/react-native-grpc';
+export const check: [typeof GrpcClient, typeof createClient] = [GrpcClient, createClient];
+TS
+# TypeScript 6 deprecates node10 resolution; silence that only where the option exists.
+TS_MAJOR=$(node -p "require('typescript/package.json').version.split('.')[0]")
+IGNORE_DEPRECATIONS=""
+if [ "$TS_MAJOR" -ge 6 ]; then IGNORE_DEPRECATIONS='"ignoreDeprecations": "6.0",'; fi
+cat > tsconfig.grpc-node10.json <<JSON
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    $IGNORE_DEPRECATIONS
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "customConditions": null,
+    "resolvePackageJsonImports": null,
+    "allowImportingTsExtensions": false
+  },
+  "include": [],
+  "files": ["grpc-node10.ts"]
+}
+JSON
+npx tsc --noEmit -p tsconfig.grpc-node10.json
+rm -f tsconfig.grpc-exports.json tsconfig.grpc-node10.json grpc-node10.ts
+
 echo "==> Bundling JS (Metro must resolve the library)"
 npx react-native bundle --platform ios --dev false --entry-file index.js \
   --bundle-output "$OUT/ios.bundle" >/dev/null
